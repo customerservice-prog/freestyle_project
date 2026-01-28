@@ -3,7 +3,9 @@ from django.urls import path, include
 from django.views.generic import RedirectView
 
 urlpatterns = [
+    # Redirect root / to /freestyle/
     path("", RedirectView.as_view(url="/freestyle/", permanent=False)),
+
     path("admin/", admin.site.urls),
     path("freestyle/", include("freestyle.urls")),
     path("api/", include("freestyle.api.urls")),

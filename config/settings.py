@@ -4,28 +4,42 @@ import dj_database_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# -----------------------------------------------------------------------------
-# Core
-# -----------------------------------------------------------------------------
-SECRET_KEY = os.environ.get("SECRET_KEY", "dev-insecure-change-me")
 
+# -----------------------------------------------------------------------------
+# Helpers
+# -----------------------------------------------------------------------------
 def _env_bool(name: str, default: bool = False) -> bool:
     val = os.environ.get(name)
     if val is None:
         return default
     return val.strip().lower() in ("1", "true", "yes", "on")
 
-DEBUG = _env_bool("DEBUG", False)
 
-# Render + your domains
+# -----------------------------------------------------------------------------
+# Core
+# -----------------------------------------------------------------------------
+SECRET_KEY = os.environ.get("SECRET_KEY", "dev-insecure-change-me")
+
+# Render usually sets RENDER=1 in the environment.
+# Local default: DEBUG=True
+# Render default: DEBUG=False
+ON_RENDER = os.environ.get("RENDER") is not None
+DEBUG = _env_bool("DEBUG", default=(not ON_RENDER))
+
 DEFAULT_ALLOWED = "localhost,127.0.0.1,.onrender.com,bars24seven.com,www.bars24seven.com"
-ALLOWED_HOSTS = [h.strip() for h in os.environ.get("ALLOWED_HOSTS", DEFAULT_ALLOWED).split(",") if h.strip()]
+ALLOWED_HOSTS = [
+    h.strip()
+    for h in os.environ.get("ALLOWED_HOSTS", DEFAULT_ALLOWED).split(",")
+    if h.strip()
+]
 
-# Needed when you submit forms/login on HTTPS domains
 CSRF_TRUSTED_ORIGINS = [
     "https://bars24seven.com",
     "https://www.bars24seven.com",
+    # optional but safe for Render subdomain testing:
+    "https://*.onrender.com",
 ]
+
 
 # -----------------------------------------------------------------------------
 # Apps
@@ -42,8 +56,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
-    # WhiteNoise must be right after SecurityMiddleware
-    "whitenoise.middleware.WhiteNoiseMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",  # must be right after SecurityMiddleware
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -72,8 +85,9 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
+
 # -----------------------------------------------------------------------------
-# Database (Render provides DATABASE_URL when you attach Postgres)
+# Database
 # -----------------------------------------------------------------------------
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if DATABASE_URL:
@@ -92,6 +106,7 @@ else:
         }
     }
 
+
 # -----------------------------------------------------------------------------
 # Password validation
 # -----------------------------------------------------------------------------
@@ -102,6 +117,7 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
+
 # -----------------------------------------------------------------------------
 # Locale
 # -----------------------------------------------------------------------------
@@ -110,26 +126,27 @@ TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
 
+
 # -----------------------------------------------------------------------------
 # Static / Media (WhiteNoise)
 # -----------------------------------------------------------------------------
-STATIC_URL = "static/"
+STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
-
-# Recommended WhiteNoise storage (hashed files)
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
 MEDIA_URL = "/media/"
-MEDIA_ROOT = os.environ.get("MEDIA_ROOT", str(BASE_DIR / "media"))
+MEDIA_ROOT = BASE_DIR / "media"
+
 
 # -----------------------------------------------------------------------------
-# Security for Render behind proxy (HTTPS)
+# Security (only when DEBUG=False)
 # -----------------------------------------------------------------------------
 if not DEBUG:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
     SECURE_SSL_REDIRECT = True
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
+
 
 # -----------------------------------------------------------------------------
 # Misc

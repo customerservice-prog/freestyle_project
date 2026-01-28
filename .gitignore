@@ -1,21 +1,16 @@
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
+*.pyd
 
 # Virtual environments
 .venv/
 venv/
-env/
-ENV/
 
 # Django
 db.sqlite3
 staticfiles/
 media/
-
-# Logs
-*.log
 
 # OS / IDE
 .DS_Store
