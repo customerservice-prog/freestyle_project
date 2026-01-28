@@ -1,27 +1,41 @@
 {% load static %}
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <title>Freestyle TV</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 
   <style>
     html, body { margin:0; padding:0; height:100%; background:#000; overflow:hidden; }
+    #player { width:100vw; height:100vh; background:#000; object-fit:contain; }
 
-    #player { width:100vw; height:100vh; background:#000; object-fit: contain; }
+    .badge { position:fixed; top:10px; left:10px; z-index:9999; display:flex; gap:8px; flex-wrap:wrap; }
+    .badge a{ color:#fff; font-family:Arial,sans-serif; font-size:14px; background:rgba(0,0,0,.45);
+      padding:8px 10px; border-radius:8px; text-decoration:none; }
 
-    .badge {
-      position:fixed; top:10px; left:10px; z-index:9999;
-      display:flex; gap:8px; flex-wrap:wrap;
+    #logo{
+      position:fixed; top:14px; right:14px;
+      height:300px; width:auto;
+      z-index:9999; pointer-events:none;
+      opacity:.95;
+      transform-origin:50% 50%;
+      filter: drop-shadow(0 0 18px rgba(0,170,255,.22));
+      animation: glow 3.2s ease-in-out infinite, microshake 7s ease-in-out infinite;
     }
-    .badge a {
-      color:#fff; font-family:Arial,sans-serif; font-size:14px;
-      background:rgba(0,0,0,.45);
-      padding:8px 10px; border-radius:8px; text-decoration:none;
+    @keyframes glow{
+      0%,100%{ filter: drop-shadow(0 0 10px rgba(0,170,255,.18)) drop-shadow(0 0 22px rgba(0,170,255,.10)); opacity:.90;}
+      50%{ filter: drop-shadow(0 0 24px rgba(0,170,255,.55)) drop-shadow(0 0 60px rgba(0,170,255,.22)); opacity:1;}
     }
-
-    .click-shield { position:fixed; inset:0; z-index:5000; background:transparent; }
+    @keyframes microshake{
+      0%,92%,100%{ transform: translate(0,0) rotate(0deg) scale(1); }
+      93%{ transform: translate(1px,-1px) rotate(-.35deg) scale(1.01); }
+      94%{ transform: translate(-1px,1px) rotate(.35deg) scale(1.01); }
+      95%{ transform: translate(1px,0px) rotate(-.25deg) scale(1.01); }
+      96%{ transform: translate(0px,1px) rotate(.25deg) scale(1.01); }
+      97%{ transform: translate(-1px,0px) rotate(0deg) scale(1); }
+    }
 
     .tv-controls{
       position:fixed; bottom:14px; left:14px; z-index:9999;
@@ -39,61 +53,26 @@
     .tv-vol{ display:flex; align-items:center; gap:8px; color:#fff; font-family:Arial; font-size:13px; }
     .tv-vol input[type="range"]{ width:150px; cursor:pointer; }
 
-    #logo {
-      position:fixed; top:14px; right:14px;
-      height:300px; width:auto;
-      z-index:9999; pointer-events:none;
-      opacity:.95;
-      transform-origin:50% 50%;
-      filter: drop-shadow(0 0 18px rgba(0,170,255,.22));
-    }
-    #logo.idle { animation: glow 3.2s ease-in-out infinite, microshake 7s ease-in-out infinite; }
-    @keyframes glow{
-      0%,100%{ filter: drop-shadow(0 0 10px rgba(0,170,255,.18)) drop-shadow(0 0 22px rgba(0,170,255,.10)); opacity:.90;}
-      50%{ filter: drop-shadow(0 0 24px rgba(0,170,255,.55)) drop-shadow(0 0 60px rgba(0,170,255,.22)); opacity:1;}
-    }
-    @keyframes microshake{
-      0%,92%,100%{ transform: translate(0,0) rotate(0deg) scale(1); }
-      93%{ transform: translate(1px,-1px) rotate(-.35deg) scale(1.01); }
-      94%{ transform: translate(-1px,1px) rotate(.35deg) scale(1.01); }
-      95%{ transform: translate(1px,0px) rotate(-.25deg) scale(1.01); }
-      96%{ transform: translate(0px,1px) rotate(.25deg) scale(1.01); }
-      97%{ transform: translate(-1px,0px) rotate(0deg) scale(1); }
+    #status{
+      position:fixed; right:14px; bottom:14px; z-index:9999;
+      color:rgba(255,255,255,.85);
+      font:12px/1.25 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      background:rgba(0,0,0,.35);
+      padding:8px 10px; border-radius:10px;
+      pointer-events:none;
+      white-space:pre;
+      max-width:min(560px, 94vw);
     }
 
-    #logo.centering {
-      top:50% !important; left:50% !important; right:auto !important;
-      transform: translate(-50%, -50%) scale(2.0);
-      transition: top 650ms cubic-bezier(.2,.9,.2,1),
-                  left 650ms cubic-bezier(.2,.9,.2,1),
-                  transform 650ms cubic-bezier(.2,.9,.2,1);
-      filter: drop-shadow(0 0 28px rgba(0,170,255,.70)) drop-shadow(0 0 100px rgba(0,170,255,.25));
-      opacity:1;
-    }
-
-    #burst { position:fixed; inset:0; pointer-events:none; z-index:10000; display:none; }
-    .p {
-      position:absolute; left:50%; top:50%;
-      width:14px; height:14px; border-radius:4px;
-      background: radial-gradient(circle at 30% 30%, rgba(255,255,255,.95), rgba(255,140,0,.95), rgba(255,0,0,.65));
-      transform: translate(-50%,-50%) scale(1);
-      filter: drop-shadow(0 0 10px rgba(255,130,0,.65));
-      opacity:1;
-      animation: fly 650ms ease-out forwards;
-    }
-    @keyframes fly {
-      to { transform: translate(var(--dx), var(--dy)) scale(.2); opacity:0; filter: drop-shadow(0 0 0 rgba(0,0,0,0)); }
-    }
-
-    .sound-gate{
+    #gate{
       position:fixed; inset:0; z-index:20000;
       display:flex; align-items:center; justify-content:center;
       background:rgba(0,0,0,.72);
       backdrop-filter: blur(10px);
     }
-    .sound-card{
-      width:min(520px, 92vw);
-      background: rgba(10,10,10,.88);
+    .gate-card{
+      width:min(560px, 92vw);
+      background: rgba(10,10,10,.90);
       border:1px solid rgba(255,255,255,.12);
       border-radius:18px;
       padding:18px;
@@ -102,63 +81,21 @@
       text-align:center;
       box-shadow: 0 10px 40px rgba(0,0,0,.55);
     }
-    .sound-card h2{ margin:0 0 8px 0; font-size:22px; }
-    .sound-btn{
-      margin-top:10px;
-      display:inline-block;
-      padding:10px 14px;
-      border-radius:12px;
+    .gate-terms{
+      text-align:left; font-size:13px; opacity:.92; line-height:1.35;
+      max-height:170px; overflow:auto;
+      border:1px solid rgba(255,255,255,.12);
+      border-radius:12px; padding:10px; margin:12px 0;
+    }
+    #enterBtn{
+      padding:10px 14px; border-radius:12px;
       background: rgba(0,170,255,.18);
       border:1px solid rgba(0,170,255,.45);
-      cursor:pointer;
-      user-select:none;
+      color:#fff; font-weight:700; width:100%;
+      cursor:not-allowed; opacity:.45;
     }
-
-    #status {
-      position:fixed; right:14px; bottom:14px; z-index:9999;
-      color:rgba(255,255,255,.8);
-      font:12px/1.2 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      background:rgba(0,0,0,.35);
-      padding:8px 10px;
-      border-radius:10px;
-      pointer-events:none;
-      white-space:pre;
-    }
-
-    /* ✅ CAPTIONS OVERLAY */
-    #captionsWrap{
-      position:fixed; left:0; right:0; bottom:64px;
-      z-index:9500; pointer-events:none;
-      display:flex; justify-content:center;
-      padding:0 14px;
-    }
-    #captions{
-      max-width:min(1080px, 92vw);
-      padding:10px 14px;
-      border-radius:16px;
-      background: rgba(0,0,0,.35);
-      backdrop-filter: blur(8px);
-      border: 1px solid rgba(255,255,255,.10);
-      box-shadow: 0 10px 30px rgba(0,0,0,.35);
-      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
-      font-weight: 800;
-      letter-spacing: .2px;
-      color:#fff;
-      line-height:1.18;
-      text-align:center;
-      text-shadow: 0 2px 10px rgba(0,0,0,.65);
-      font-size: clamp(18px, 2.6vw, 34px);
-    }
-    .cw{ opacity:.78; }
-    .cw.hot{
-      opacity:1;
-      display:inline-block;
-      transform: scale(1.08);
-      filter: drop-shadow(0 0 18px rgba(0,170,255,.28));
-    }
+    #enterBtn.enabled{ cursor:pointer; opacity:1; }
   </style>
-
-  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 </head>
 
 <body>
@@ -168,133 +105,84 @@
     <a href="/freestyle/creator/">Creator</a>
   </div>
 
-  <img id="logo" class="idle" src="{% static 'freestyle/img/logo.png' %}" alt="Logo">
-  <div id="burst"></div>
+  <img id="logo" src="{% static 'freestyle/img/logo.png' %}" alt="Logo" />
 
-  <video
-    id="player"
-    autoplay
-    muted
-    playsinline
-    preload="auto"
-    controlslist="nodownload noplaybackrate noremoteplayback"
-    disablepictureinpicture
-  ></video>
-
-  <div id="captionsWrap"><div id="captions" style="display:none;"></div></div>
-
-  <div class="click-shield" aria-hidden="true"></div>
+  <video id="player" playsinline preload="auto" muted autoplay
+    controlslist="nodownload noplaybackrate noremoteplayback" disablepictureinpicture></video>
 
   <div class="tv-controls">
     <button id="muteBtn" class="tv-btn" type="button">Unmute</button>
     <div class="tv-vol">
       <span>Vol</span>
-      <input id="volSlider" type="range" min="0" max="1" step="0.01" value="0.8">
+      <input id="volSlider" type="range" min="0" max="1" step="0.01" value="0.8" />
     </div>
     <button id="fsBtn" class="tv-btn" type="button">Fullscreen</button>
   </div>
 
-  <div id="soundGate" class="sound-gate">
-    <div class="sound-card">
-      <h2>Tap to Enter</h2>
-      <p style="margin:0 0 10px 0; opacity:.9;">Please confirm you agree to our Terms before entering.</p>
+  <div id="status">loading…</div>
 
-      <div style="text-align:left; font-size:13px; opacity:.92; line-height:1.35; max-height:170px; overflow:auto; border:1px solid rgba(255,255,255,.12); border-radius:12px; padding:10px; margin-bottom:12px;">
+  <div id="gate">
+    <div class="gate-card">
+      <h2>Tap to Enter</h2>
+      <div style="opacity:.9">Confirm you agree to our Terms before entering.</div>
+
+      <div class="gate-terms">
         <b>Terms Summary (example)</b><br/>
         • You confirm you have rights to upload content.<br/>
         • You grant us a worldwide, royalty-free license to host, stream, promote, and monetize it.<br/>
         • No illegal or infringing uploads.<br/>
         • We may remove content at any time.<br/><br/>
-        <i>For real protection, link to full Terms/Privacy pages and have them reviewed.</i>
+        <i>Link your real Terms/Privacy pages.</i>
       </div>
 
-      <label style="display:flex; gap:10px; align-items:flex-start; text-align:left; margin-bottom:10px; font-size:13px;">
-        <input id="agreeBox" type="checkbox" style="margin-top:3px;">
+      <label style="display:flex; gap:10px; align-items:flex-start; text-align:left; font-size:13px;">
+        <input id="agreeBox" type="checkbox" style="margin-top:3px;" />
         <span>I agree to the Terms, Privacy, and Content Policy.</span>
       </label>
 
-      <div id="enterBtn" class="sound-btn" style="opacity:.45; pointer-events:none;">Enter</div>
+      <button id="enterBtn" type="button">Enter</button>
       <div style="margin-top:8px; font-size:12px; opacity:.7;">(Entering starts playback.)</div>
     </div>
   </div>
 
-  <div id="status"></div>
-
   <script>
-    const videoEl = document.getElementById("player");
-    const logoEl  = document.getElementById("logo");
-    const burstEl = document.getElementById("burst");
+    const videoEl  = document.getElementById("player");
     const statusEl = document.getElementById("status");
 
-    const captionsEl = document.getElementById("captions");
+    const gateEl   = document.getElementById("gate");
+    const agreeBox = document.getElementById("agreeBox");
+    const enterBtn = document.getElementById("enterBtn");
 
     const muteBtn   = document.getElementById("muteBtn");
     const volSlider = document.getElementById("volSlider");
     const fsBtn     = document.getElementById("fsBtn");
 
-    const gateEl   = document.getElementById("soundGate");
-    const agreeBox = document.getElementById("agreeBox");
-    const enterBtn = document.getElementById("enterBtn");
-
-    // ✅ relative URLs (works on 8000 or 8001 automatically)
     const nowUrl = "/api/freestyle/channel/main/now.json";
-    const captionsUrlFor = (videoId) => `/api/freestyle/video/${videoId}/captions.json`;
-
-    const POLL_MS = 12000;
-    const SWITCH_LOCK_MS = 2000;
-    const BIG_DRIFT_SEC = 6;
 
     let hls = null;
+    let started = false;
     let currentVideoId = null;
-    let switchLockUntil = 0;
-    let stingerStarted = false;
+    let lastSwitchAt = 0;
 
-    // captions state
-    let capWords = [];
-    let capIndex = 0;
-    let capLastVideoId = null;
+    function setStatus(lines){ statusEl.textContent = lines.join("\\n"); }
+    function destroyHls(){ if (hls) { hls.destroy(); hls = null; } }
 
-    function nowMs(){ return performance.now(); }
-    function canSwitch(){ return nowMs() >= switchLockUntil; }
-    function lockSwitch(){ switchLockUntil = nowMs() + SWITCH_LOCK_MS; }
+    function updateMuteBtn(){ muteBtn.textContent = videoEl.muted ? "Unmute" : "Mute"; }
 
-    function setStatus(lines){ statusEl.textContent = lines.join("\n"); }
-
-    // -------- Gate --------
-    function hideGate(){ gateEl.style.display = "none"; }
-
-    agreeBox.addEventListener("change", () => {
-      if (agreeBox.checked) {
-        enterBtn.style.opacity = "1";
-        enterBtn.style.pointerEvents = "auto";
-      } else {
-        enterBtn.style.opacity = ".45";
-        enterBtn.style.pointerEvents = "none";
-      }
-    });
-
-    enterBtn.addEventListener("click", async () => {
-      videoEl.muted = false;
-      videoEl.volume = parseFloat(volSlider.value);
-      updateMuteButton();
-      try { await videoEl.play(); } catch(e) {}
-      hideGate();
-      syncNow().catch(()=>{});
-    });
-
-    // -------- Controls --------
-    function updateMuteButton(){ muteBtn.textContent = videoEl.muted ? "Unmute" : "Mute"; }
+    videoEl.muted = true;
+    videoEl.volume = parseFloat(volSlider.value);
+    updateMuteBtn();
 
     muteBtn.addEventListener("click", async () => {
       videoEl.muted = !videoEl.muted;
-      updateMuteButton();
+      updateMuteBtn();
       try { await videoEl.play(); } catch(e) {}
     });
 
     volSlider.addEventListener("input", () => {
       videoEl.volume = parseFloat(volSlider.value);
       if (videoEl.volume > 0) videoEl.muted = false;
-      updateMuteButton();
+      updateMuteBtn();
     });
 
     fsBtn.addEventListener("click", async () => {
@@ -304,76 +192,20 @@
       } catch(e) {}
     });
 
-    // autoplay reliability
-    videoEl.muted = true;
-    videoEl.volume = parseFloat(volSlider.value);
-    updateMuteButton();
-    videoEl.controls = false;
-    videoEl.disablePictureInPicture = true;
-
-    async function forcePlay(){ try { await videoEl.play(); } catch(e) {} }
-    videoEl.addEventListener("pause", () => { setTimeout(forcePlay, 80); });
-
-    function destroyHls(){ if (hls) { hls.destroy(); hls = null; } }
-
-    function resetLogoCorner(){
-      logoEl.classList.remove("centering");
-      logoEl.classList.add("idle");
-      logoEl.style.left = "";
-    }
-
-    function boomSound(){
-      try {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const o = ctx.createOscillator();
-        const g = ctx.createGain();
-        o.type = "sawtooth";
-        o.frequency.setValueAtTime(110, ctx.currentTime);
-        o.frequency.exponentialRampToValueAtTime(40, ctx.currentTime + 0.18);
-        g.gain.setValueAtTime(0.0001, ctx.currentTime);
-        g.gain.exponentialRampToValueAtTime(0.35, ctx.currentTime + 0.02);
-        g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
-        o.connect(g); g.connect(ctx.destination);
-        o.start(); o.stop(ctx.currentTime + 0.4);
-      } catch(e) {}
-    }
-
-    function burst(){
-      burstEl.innerHTML = "";
-      burstEl.style.display = "block";
-      const count = 26;
-      for (let i=0;i<count;i++){
-        const p = document.createElement("div");
-        p.className = "p";
-        const ang = Math.random() * Math.PI * 2;
-        const dist = 120 + Math.random() * 220;
-        const dx = Math.cos(ang) * dist;
-        const dy = Math.sin(ang) * dist;
-        p.style.setProperty("--dx", dx.toFixed(0) + "px");
-        p.style.setProperty("--dy", dy.toFixed(0) + "px");
-        p.style.width = (10 + Math.random()*14).toFixed(0) + "px";
-        p.style.height = p.style.width;
-        burstEl.appendChild(p);
+    enterBtn.disabled = true;
+    agreeBox.addEventListener("change", () => {
+      if (agreeBox.checked){
+        enterBtn.classList.add("enabled");
+        enterBtn.disabled = false;
+      } else {
+        enterBtn.classList.remove("enabled");
+        enterBtn.disabled = true;
       }
-      setTimeout(() => { burstEl.style.display = "none"; burstEl.innerHTML = ""; }, 700);
-    }
-
-    function startStinger(){
-      if (stingerStarted) return;
-      stingerStarted = true;
-      logoEl.classList.remove("idle");
-      logoEl.classList.add("centering");
-    }
-
-    function explodeStinger(){
-      boomSound();
-      burst();
-      resetLogoCorner();
-    }
+    });
 
     async function fetchNow(){
-      const res = await fetch(nowUrl, { cache: "no-store" });
-      if (!res.ok) throw new Error("now.json failed");
+      const res = await fetch(nowUrl, { cache:"no-store" });
+      if (!res.ok) throw new Error(`now.json HTTP ${res.status}`);
       return await res.json();
     }
 
@@ -390,7 +222,7 @@
           hls.loadSource(url);
           hls.attachMedia(videoEl);
         } else {
-          throw new Error("HLS not supported in this browser.");
+          throw new Error("HLS not supported.");
         }
       } else {
         videoEl.src = url;
@@ -398,148 +230,48 @@
     }
 
     function seekTo(offsetSeconds){
-      let t = Math.max(0, Math.floor(offsetSeconds || 0));
-      if (isFinite(videoEl.duration) && videoEl.duration > 0) {
-        t = Math.min(t, Math.max(0, videoEl.duration - 0.35));
-      }
+      const t = Math.max(0, Math.floor(offsetSeconds || 0));
       try { videoEl.currentTime = t; } catch(e) {}
-    }
-
-    // -------------------------
-    // ✅ CAPTIONS: load + render
-    // -------------------------
-    async function loadCaptions(videoId){
-      if (!videoId) return;
-      if (capLastVideoId === videoId) return;
-
-      capLastVideoId = videoId;
-      capWords = [];
-      capIndex = 0;
-      captionsEl.style.display = "none";
-      captionsEl.textContent = "";
-
-      try{
-        const res = await fetch(captionsUrlFor(videoId), { cache:"no-store" });
-        if (!res.ok) throw new Error("captions fetch failed");
-        const data = await res.json();
-        capWords = Array.isArray(data.words) ? data.words : [];
-        capIndex = 0;
-        if (capWords.length > 0) captionsEl.style.display = "block";
-      }catch(e){
-        // no captions for this video
-        capWords = [];
-        capIndex = 0;
-        captionsEl.style.display = "none";
-      }
-    }
-
-    function findIndexForTime(t){
-      // binary search by start time
-      let lo = 0, hi = capWords.length - 1, ans = 0;
-      while (lo <= hi){
-        const mid = (lo + hi) >> 1;
-        const s = capWords[mid].s || 0;
-        if (s <= t){ ans = mid; lo = mid + 1; }
-        else hi = mid - 1;
-      }
-      return ans;
-    }
-
-    function renderCaptions(){
-      if (!capWords.length) return;
-
-      const t = videoEl.currentTime || 0;
-
-      // if user seeks backwards or we switched, re-sync index
-      if (capIndex >= capWords.length || (capWords[capIndex] && (capWords[capIndex].s || 0) > t + 0.4)){
-        capIndex = findIndexForTime(t);
-      }
-
-      // advance index while we're past end
-      while (capIndex < capWords.length && (capWords[capIndex].e || 0) < t){
-        capIndex++;
-      }
-      if (capIndex >= capWords.length) return;
-
-      // show a small window around current word
-      const start = Math.max(0, capIndex - 3);
-      const end = Math.min(capWords.length, capIndex + 6);
-
-      const parts = [];
-      for (let i=start; i<end; i++){
-        const w = (capWords[i].w || "").trim();
-        if (!w) continue;
-        const isHot = (i === capIndex) && (t >= (capWords[i].s||0) - 0.02) && (t <= (capWords[i].e||0) + 0.02);
-        parts.push(`<span class="cw ${isHot ? "hot":""}">${escapeHtml(w)}</span>`);
-      }
-      captionsEl.innerHTML = parts.join(" ");
-      captionsEl.style.display = parts.length ? "block" : "none";
-    }
-
-    function escapeHtml(s){
-      return (s || "")
-        .replaceAll("&","&amp;")
-        .replaceAll("<","&lt;")
-        .replaceAll(">","&gt;")
-        .replaceAll('"',"&quot;")
-        .replaceAll("'","&#039;");
-    }
-
-    // render captions smoothly
-    function rafLoop(){
-      renderCaptions();
-      requestAnimationFrame(rafLoop);
-    }
-    requestAnimationFrame(rafLoop);
-
-    // -------------------------
-
-    async function switchTo(item, offsetSeconds){
-      lockSwitch();
-      stingerStarted = false;
-
-      // captions switch
-      await loadCaptions(item.video_id);
-
-      videoEl.style.visibility = "hidden";
-      explodeStinger();
-      attachSource(item);
-
-      const onMeta = () => {
-        videoEl.removeEventListener("loadedmetadata", onMeta);
-        seekTo(offsetSeconds);
-        videoEl.style.visibility = "visible";
-        forcePlay();
-      };
-      videoEl.addEventListener("loadedmetadata", onMeta);
-
-      videoEl.load();
-      forcePlay();
     }
 
     async function applyServer(data){
       const item = data.item;
       const offset = data.offset_seconds || 0;
-      if (!item || !item.video_id || !item.play_url) return;
 
-      setStatus([
-        `live video_id: ${item.video_id}`,
-        `offset_seconds: ${offset}`,
-        `lock_ms: ${Math.max(0, Math.round(switchLockUntil - nowMs()))}`,
-        `captions: ${capWords.length}`,
-      ]);
-
-      if (item.video_id !== currentVideoId) {
-        if (!canSwitch()) return;
-        currentVideoId = item.video_id;
-        await switchTo(item, offset);
+      if (!item || !item.video_id || !item.play_url){
+        setStatus(["LIVE error:", "missing item/video_id/play_url"]);
         return;
       }
 
-      const diff = Math.abs((videoEl.currentTime || 0) - offset);
-      if (diff > BIG_DRIFT_SEC && !videoEl.seeking) {
-        seekTo(offset);
+      setStatus([
+        "LIVE ok",
+        `video_id: ${item.video_id}`,
+        `offset: ${offset}`,
+        `src: ${item.play_url}`,
+      ]);
+
+      // Switch only when server changed the video
+      if (item.video_id !== currentVideoId){
+        currentVideoId = item.video_id;
+        lastSwitchAt = Date.now();
+
+        attachSource(item);
+
+        const onMeta = async () => {
+          videoEl.removeEventListener("loadedmetadata", onMeta);
+          seekTo(offset);
+          try { await videoEl.play(); } catch(e) {}
+        };
+        videoEl.addEventListener("loadedmetadata", onMeta);
+
+        videoEl.load();
+        try { await videoEl.play(); } catch(e) {}
+        return;
       }
+
+      // Same video: drift correction only (this keeps everyone synced)
+      const diff = Math.abs((videoEl.currentTime || 0) - offset);
+      if (diff > 4 && !videoEl.seeking) seekTo(offset);
     }
 
     async function syncNow(){
@@ -547,33 +279,51 @@
       await applyServer(data);
     }
 
-    // prevent scrubbing/rewind: snap back to LIVE
-    videoEl.addEventListener("seeking", () => {
+    // If ended, ask server what's live now (no local looping)
+    videoEl.addEventListener("ended", () => {
+      if (!started) return;
+      // ignore fake ended events right after switching
+      if (Date.now() - lastSwitchAt < 1500) return;
       syncNow().catch(()=>{});
     });
 
-    // stinger 5s before end (visual only)
-    videoEl.addEventListener("timeupdate", () => {
-      if (!videoEl.duration || !isFinite(videoEl.duration)) return;
-      const remaining = videoEl.duration - videoEl.currentTime;
-      if (!stingerStarted && remaining <= 5.0 && remaining > 0) startStinger();
+    // Only auto-resume if paused mid-play (not ended)
+    videoEl.addEventListener("pause", () => {
+      if (!started) return;
+      if (videoEl.ended) return;
+      setTimeout(() => videoEl.play().catch(()=>{}), 150);
     });
 
-    videoEl.addEventListener("ended", () => { syncNow().catch(()=>{}); });
-
     document.addEventListener("visibilitychange", () => {
+      if (!started) return;
       if (document.visibilityState === "visible") {
         syncNow().catch(()=>{});
-        forcePlay();
+        videoEl.play().catch(()=>{});
       }
     });
 
-    setInterval(() => { syncNow().catch(()=>{}); }, POLL_MS);
+    enterBtn.addEventListener("click", async () => {
+      videoEl.muted = false;
+      videoEl.volume = parseFloat(volSlider.value);
+      updateMuteBtn();
 
-    // Boot
-    syncNow().catch(err => {
-      console.error(err);
-      alert("Failed to load Live TV endpoint: " + nowUrl);
+      gateEl.style.display = "none";
+      started = true;
+
+      try{
+        await syncNow();
+      }catch(e){
+        console.error(e);
+        setStatus(["LIVE error:", String(e)]);
+        alert("Failed to load Live TV endpoint: " + nowUrl);
+        return;
+      }
+
+      // poll to stay synced
+      setInterval(() => {
+        if (!started) return;
+        syncNow().catch(()=>{});
+      }, 12000);
     });
   </script>
 </body>

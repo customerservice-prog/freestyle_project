@@ -1,12 +1,19 @@
 from django.contrib import admin
 from django.urls import path, include
+from django.conf import settings
+from django.conf.urls.static import static
 from django.views.generic import RedirectView
 
 urlpatterns = [
-    # Redirect root / to /freestyle/
-    path("", RedirectView.as_view(url="/freestyle/", permanent=False)),
-
     path("admin/", admin.site.urls),
+
     path("freestyle/", include("freestyle.urls")),
-    path("api/", include("freestyle.api.urls")),
+
+    # ✅ keep /api/ in the URL, but point it to tvapi
+    path("api/", include("tvapi.urls")),
+
+    path("", RedirectView.as_view(url="/freestyle/", permanent=False)),
 ]
+
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
