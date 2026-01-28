@@ -1,7 +1,7 @@
 # Python
 __pycache__/
 *.py[cod]
-*.pyd
+*$py.class
 
 # Virtual environments
 .venv/
@@ -11,6 +11,10 @@ venv/
 db.sqlite3
 staticfiles/
 media/
+
+# Env files
+.env
+.env.*
 
 # OS / IDE
 .DS_Store
