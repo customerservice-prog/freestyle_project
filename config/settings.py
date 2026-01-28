@@ -1,31 +1,35 @@
-from __future__ import annotations
-
-import os
 from pathlib import Path
-
+import os
 import dj_database_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# -------------------------
+# -----------------------------------------------------------------------------
 # Core
-# -------------------------
+# -----------------------------------------------------------------------------
+SECRET_KEY = os.environ.get("SECRET_KEY", "dev-insecure-change-me")
 
-SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-only-insecure-secret-key-change-me")
-DEBUG = os.environ.get("DJANGO_DEBUG", "1") in ("1", "true", "True", "yes", "YES")
-ALLOWED_HOSTS = (
-    os.environ.get("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
-    if not DEBUG
-    else ["*"]
-)
+def _env_bool(name: str, default: bool = False) -> bool:
+    val = os.environ.get(name)
+    if val is None:
+        return default
+    return val.strip().lower() in ("1", "true", "yes", "on")
 
-# If you're behind a proxy (Render/Heroku/etc), you may need:
-# SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+DEBUG = _env_bool("DEBUG", False)
 
-# -------------------------
+# Render + your domains
+DEFAULT_ALLOWED = "localhost,127.0.0.1,.onrender.com,bars24seven.com,www.bars24seven.com"
+ALLOWED_HOSTS = [h.strip() for h in os.environ.get("ALLOWED_HOSTS", DEFAULT_ALLOWED).split(",") if h.strip()]
+
+# Needed when you submit forms/login on HTTPS domains
+CSRF_TRUSTED_ORIGINS = [
+    "https://bars24seven.com",
+    "https://www.bars24seven.com",
+]
+
+# -----------------------------------------------------------------------------
 # Apps
-# -------------------------
-
+# -----------------------------------------------------------------------------
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
@@ -33,12 +37,13 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    # your app
     "freestyle",
 ]
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    # WhiteNoise must be right after SecurityMiddleware
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -52,9 +57,7 @@ ROOT_URLCONF = "config.urls"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [
-            BASE_DIR / "templates",  # optional project-level templates folder
-        ],
+        "DIRS": [],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -69,41 +72,29 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
-# -------------------------
-# Database
-# -------------------------
-# Local default: sqlite
-# Prod: set DATABASE_URL (e.g. postgres://...)
-#
-# IMPORTANT: sqlite cannot accept sslmode/OPTIONS. We strip them if sqlite.
-#
-# If you want SSL for Postgres, set it only when engine is not sqlite.
-
-DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
-
-DATABASES = {
-    "default": dj_database_url.config(
-        default=f"sqlite:///{(BASE_DIR / 'db.sqlite3')}",
-        conn_max_age=int(os.environ.get("DB_CONN_MAX_AGE", "0")),
-    )
-}
-
-# If we're using sqlite, remove OPTIONS entirely (fixes your 'sslmode' crash).
-if DATABASES["default"]["ENGINE"].endswith("sqlite3"):
-    DATABASES["default"].pop("OPTIONS", None)
+# -----------------------------------------------------------------------------
+# Database (Render provides DATABASE_URL when you attach Postgres)
+# -----------------------------------------------------------------------------
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if DATABASE_URL:
+    DATABASES = {
+        "default": dj_database_url.config(
+            default=DATABASE_URL,
+            conn_max_age=600,
+            ssl_require=not DEBUG,
+        )
+    }
 else:
-    # For Postgres-like engines, you can enforce sslmode if desired:
-    if os.environ.get("DB_SSLMODE", "").strip():
-        DATABASES["default"].setdefault("OPTIONS", {})
-        DATABASES["default"]["OPTIONS"]["sslmode"] = os.environ["DB_SSLMODE"].strip()
-    # Common default for hosted Postgres:
-    # DATABASES["default"].setdefault("OPTIONS", {})
-    # DATABASES["default"]["OPTIONS"].setdefault("sslmode", "require")
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
+    }
 
-# -------------------------
+# -----------------------------------------------------------------------------
 # Password validation
-# -------------------------
-
+# -----------------------------------------------------------------------------
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
@@ -111,42 +102,36 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
-# -------------------------
-# I18N / Time
-# -------------------------
-
+# -----------------------------------------------------------------------------
+# Locale
+# -----------------------------------------------------------------------------
 LANGUAGE_CODE = "en-us"
-TIME_ZONE = os.environ.get("DJANGO_TIME_ZONE", "UTC")
+TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
 
-# -------------------------
-# Static / Media
-# -------------------------
-# Your video files live under MEDIA_ROOT/media/...
-
+# -----------------------------------------------------------------------------
+# Static / Media (WhiteNoise)
+# -----------------------------------------------------------------------------
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
+# Recommended WhiteNoise storage (hashed files)
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+
 MEDIA_URL = "/media/"
-MEDIA_ROOT = BASE_DIR / "media"
+MEDIA_ROOT = os.environ.get("MEDIA_ROOT", str(BASE_DIR / "media"))
 
-# -------------------------
+# -----------------------------------------------------------------------------
+# Security for Render behind proxy (HTTPS)
+# -----------------------------------------------------------------------------
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+
+# -----------------------------------------------------------------------------
 # Misc
-# -------------------------
-
+# -----------------------------------------------------------------------------
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
-
-# Helpful in dev if you're calling API endpoints from same origin
-CSRF_TRUSTED_ORIGINS = [
-    o.strip() for o in os.environ.get("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()
-]
-
-# Optional: quieter logging (adjust as needed)
-LOG_LEVEL = os.environ.get("DJANGO_LOG_LEVEL", "INFO")
-LOGGING = {
-    "version": 1,
-    "disable_existing_loggers": False,
-    "handlers": {"console": {"class": "logging.StreamHandler"}},
-    "root": {"handlers": ["console"], "level": LOG_LEVEL},
-}
