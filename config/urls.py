@@ -1,26 +1,10 @@
 from django.contrib import admin
 from django.urls import path, include
+from django.views.generic import RedirectView
 
 urlpatterns = [
-    path("admin/", admin.site.urls),
-
-    # TV page
-    path("freestyle/", include("freestyle.urls")),
-
-    # API endpoints used by the TV
-    path("api/", include("freestyle.api_urls")),
-]
-
-from django.contrib import admin
-from django.urls import path, include
-from django.shortcuts import redirect
-
-def root(request):
-    return redirect("/freestyle/")
-
-urlpatterns = [
-    path("", root),
+    path("", RedirectView.as_view(url="/freestyle/", permanent=False)),
     path("admin/", admin.site.urls),
     path("freestyle/", include("freestyle.urls")),
-    path("api/", include("freestyle.api_urls")),
+    path("api/", include("freestyle.api.urls")),
 ]
