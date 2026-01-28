@@ -1,0 +1,15 @@
+<h1>Review Queue</h1>
+<p><a href="/control/freestyle/channel/main/">Channel Manager</a></p>
+
+{% if pending %}
+  <ul>
+    {% for s in pending %}
+      <li>
+        <a href="/control/freestyle/review/{{ s.id }}/">{{ s.title }}</a>
+        — {{ s.email }} — {{ s.created_at }}
+      </li>
+    {% endfor %}
+  </ul>
+{% else %}
+  No pending submissions ✅
+{% endif %}

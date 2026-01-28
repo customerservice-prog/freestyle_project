@@ -1,0 +1,8 @@
+<h1>Upload a video</h1>
+<p><a href="/freestyle/creator/">Back</a></p>
+
+<form method="post" enctype="multipart/form-data">
+  {% csrf_token %}
+  {{ form.as_p }}
+  <button type="submit">Upload</button>
+</form>

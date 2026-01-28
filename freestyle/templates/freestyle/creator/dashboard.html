@@ -1,0 +1,37 @@
+<h1>Creator Dashboard</h1>
+<p><a href="/freestyle/">TV</a> · <a href="/freestyle/creator/upload/">Upload</a> · <a href="/admin/logout/">Logout</a></p>
+
+<div style="display:flex; gap:20px;">
+  <div style="border:1px solid #ddd; padding:16px; width:360px;">
+    <h3>Your settings</h3>
+    <p><b>Name:</b> {{ profile.user.username }}</p>
+    <p><b>Trusted (auto-publish):</b> {{ profile.is_trusted }}</p>
+    <small>If trusted is False, your uploads go to admin review.</small>
+  </div>
+
+  <div style="border:1px solid #ddd; padding:16px; width:360px;">
+    <h3>Pending (needs review)</h3>
+    {% if pending %}
+      <ul>
+        {% for v in pending %}
+          <li>{{ v.title }} — {{ v.created_at }}</li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      None ✅
+    {% endif %}
+  </div>
+</div>
+
+<div style="margin-top:20px; border:1px solid #ddd; padding:16px;">
+  <h3>Your published videos</h3>
+  {% if published %}
+    <ul>
+      {% for v in published %}
+        <li>{{ v.title }} — {{ v.published_at }}</li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    None yet.
+  {% endif %}
+</div>

@@ -1,0 +1,125 @@
+{% load static %}
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Freestyle TV</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    html, body { margin:0; padding:0; height:100%; background:#000; overflow:hidden; }
+    #player { width:100vw; height:100vh; background:#000; }
+
+    .badge { position:fixed; top:10px; left:10px; z-index:9999; }
+    .badge a { color:#fff; font-family:Arial; font-size:14px; background:rgba(0,0,0,.45); padding:8px 10px; border-radius:8px; text-decoration:none; margin-right:8px; }
+
+    /* LOGO overlay (5x bigger) */
+    .logo {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      height: 350px;      /* <-- 70px * 5 */
+      width: auto;
+      z-index: 9999;
+      opacity: 0.92;
+      pointer-events: none;
+      filter: drop-shadow(0 2px 10px rgba(0,0,0,.7));
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+</head>
+<body>
+
+  <div class="badge">
+    <a href="/freestyle/submit/">Submit</a>
+    <a href="/control/freestyle/channel/">Manage (staff)</a>
+    <a href="/freestyle/creator/">Creator</a>
+  </div>
+
+  <img class="logo" src="{% static 'freestyle/img/logo.png' %}" alt="Logo" />
+
+  <video id="player" controls autoplay muted playsinline></video>
+
+  <script>
+    const videoEl = document.getElementById("player");
+    const scheduleUrl = "/api/freestyle/channel/main/schedule.json";
+    const completeUrl = "/api/freestyle/channel/complete";
+
+    let items = [];
+    let idx = 0;
+    let hls = null;
+    let marked = false;
+
+    function postComplete(item) {
+      if (!item || marked) return;
+      marked = true;
+
+      const form = new URLSearchParams();
+      form.set("channel_id", item.channel_id);
+      form.set("entry_id", item.entry_id);
+      form.set("video_id", item.video_id);
+
+      fetch(completeUrl, { method: "POST", body: form }).catch(()=>{});
+    }
+
+    function playItem(item) {
+      if (!item || !item.play_url) return;
+      marked = false;
+
+      if (hls) { hls.destroy(); hls = null; }
+
+      const url = item.play_url;
+
+      if (item.is_hls) {
+        if (videoEl.canPlayType("application/vnd.apple.mpegurl")) {
+          videoEl.src = url;
+          videoEl.play().catch(()=>{});
+        } else if (window.Hls) {
+          hls = new Hls({ enableWorker: true });
+          hls.loadSource(url);
+          hls.attachMedia(videoEl);
+          hls.on(Hls.Events.MANIFEST_PARSED, () => videoEl.play().catch(()=>{}));
+        } else {
+          alert("HLS not supported in this browser.");
+        }
+      } else {
+        videoEl.src = url;
+        videoEl.play().catch(()=>{});
+      }
+    }
+
+    async function start() {
+      const res = await fetch(scheduleUrl);
+      const data = await res.json();
+      items = data.items || [];
+      idx = 0;
+
+      if (!items.length) {
+        alert("No videos yet. Add videos in /control/freestyle/channel/");
+        return;
+      }
+      playItem(items[idx]);
+    }
+
+    videoEl.addEventListener("timeupdate", () => {
+      const cur = items[idx];
+      if (!cur) return;
+      if (videoEl.duration && (videoEl.currentTime / videoEl.duration) >= 0.9) {
+        postComplete(cur);
+      }
+    });
+
+    videoEl.addEventListener("ended", () => {
+      const cur = items[idx];
+      postComplete(cur);
+
+      idx = (idx + 1) % items.length;
+      playItem(items[idx]);
+    });
+
+    start().catch(err => {
+      console.error(err);
+      alert("Failed to load schedule.");
+    });
+  </script>
+</body>
+</html>

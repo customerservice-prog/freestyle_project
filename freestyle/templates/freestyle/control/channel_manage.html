@@ -1,0 +1,38 @@
+<h1>Channel Manager: {{ channel.slug }}</h1>
+<p>
+  Public player: <a href="/freestyle/">/freestyle/</a> ·
+  API: <a href="/api/freestyle/channel/main/schedule.json">schedule.json</a>
+</p>
+
+<div style="border:1px solid #ddd; padding:16px; max-width:900px;">
+  <h2>Current Playlist (click delete to remove)</h2>
+
+  <table border="1" cellpadding="8" cellspacing="0" style="width:100%;">
+    <tr>
+      <th>#</th>
+      <th>Title</th>
+      <th>Source</th>
+      <th></th>
+    </tr>
+    {% for e in entries %}
+      <tr>
+        <td>{{ e.position }}</td>
+        <td>{{ e.video.title }}</td>
+        <td>
+          {% if e.video.playback_url %}
+            URL: <a href="{{ e.video.playback_url }}">{{ e.video.playback_url }}</a>
+          {% elif e.video.video_file %}
+            MP4: <a href="{{ e.video.video_file.url }}">{{ e.video.video_file.name }}</a>
+          {% endif %}
+        </td>
+        <td>
+          <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="delete_entry_id" value="{{ e.id }}">
+            <button type="submit" style="background:#fff; border:1px solid #f99; padding:6px 10px;">Delete</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+  </table>
+</div>

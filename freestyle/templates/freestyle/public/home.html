@@ -1,0 +1,573 @@
+{% load static %}
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Freestyle TV</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <style>
+    html, body { margin:0; padding:0; height:100%; background:#000; overflow:hidden; }
+    #player { width:100vw; height:100vh; background:#000; object-fit: contain; }
+
+    .badge {
+      position:fixed; top:10px; left:10px; z-index:9999;
+      display:flex; gap:8px; flex-wrap:wrap;
+    }
+    .badge a {
+      color:#fff; font-family:Arial,sans-serif; font-size:14px;
+      background:rgba(0,0,0,.45);
+      padding:8px 10px; border-radius:8px; text-decoration:none;
+    }
+
+    .click-shield { position:fixed; inset:0; z-index:5000; background:transparent; }
+
+    .tv-controls{
+      position:fixed; bottom:14px; left:14px; z-index:9999;
+      display:flex; align-items:center; gap:10px;
+      padding:10px 12px; border-radius:12px;
+      background:rgba(0,0,0,.40); backdrop-filter: blur(6px);
+    }
+    .tv-btn{
+      color:#fff; font-family:Arial,sans-serif; font-size:14px;
+      border:1px solid rgba(255,255,255,.22);
+      background:rgba(255,255,255,.06);
+      padding:8px 10px; border-radius:10px;
+      cursor:pointer; user-select:none;
+    }
+    .tv-vol{ display:flex; align-items:center; gap:8px; color:#fff; font-family:Arial; font-size:13px; }
+    .tv-vol input[type="range"]{ width:150px; cursor:pointer; }
+
+    #logo {
+      position:fixed; top:14px; right:14px;
+      height:300px; width:auto;
+      z-index:9999; pointer-events:none;
+      opacity:.95;
+      transform-origin:50% 50%;
+      filter: drop-shadow(0 0 18px rgba(0,170,255,.22));
+    }
+    #logo.idle { animation: glow 3.2s ease-in-out infinite, microshake 7s ease-in-out infinite; }
+    @keyframes glow{
+      0%,100%{ filter: drop-shadow(0 0 10px rgba(0,170,255,.18)) drop-shadow(0 0 22px rgba(0,170,255,.10)); opacity:.90;}
+      50%{ filter: drop-shadow(0 0 24px rgba(0,170,255,.55)) drop-shadow(0 0 60px rgba(0,170,255,.22)); opacity:1;}
+    }
+    @keyframes microshake{
+      0%,92%,100%{ transform: translate(0,0) rotate(0deg) scale(1); }
+      93%{ transform: translate(1px,-1px) rotate(-.35deg) scale(1.01); }
+      94%{ transform: translate(-1px,1px) rotate(.35deg) scale(1.01); }
+      95%{ transform: translate(1px,0px) rotate(-.25deg) scale(1.01); }
+      96%{ transform: translate(0px,1px) rotate(.25deg) scale(1.01); }
+      97%{ transform: translate(-1px,0px) rotate(0deg) scale(1); }
+    }
+
+    #logo.centering {
+      top:50% !important; left:50% !important; right:auto !important;
+      transform: translate(-50%, -50%) scale(2.0);
+      transition: top 650ms cubic-bezier(.2,.9,.2,1),
+                  left 650ms cubic-bezier(.2,.9,.2,1),
+                  transform 650ms cubic-bezier(.2,.9,.2,1);
+      filter: drop-shadow(0 0 28px rgba(0,170,255,.70)) drop-shadow(0 0 100px rgba(0,170,255,.25));
+      opacity:1;
+    }
+
+    #burst { position:fixed; inset:0; pointer-events:none; z-index:10000; display:none; }
+    .p {
+      position:absolute; left:50%; top:50%;
+      width:14px; height:14px; border-radius:4px;
+      background: radial-gradient(circle at 30% 30%, rgba(255,255,255,.95), rgba(255,140,0,.95), rgba(255,0,0,.65));
+      transform: translate(-50%,-50%) scale(1);
+      filter: drop-shadow(0 0 10px rgba(255,130,0,.65));
+      opacity:1;
+      animation: fly 650ms ease-out forwards;
+    }
+    @keyframes fly {
+      to { transform: translate(var(--dx), var(--dy)) scale(.2); opacity:0; filter: drop-shadow(0 0 0 rgba(0,0,0,0)); }
+    }
+
+    .sound-gate{
+      position:fixed; inset:0; z-index:20000;
+      display:flex; align-items:center; justify-content:center;
+      background:rgba(0,0,0,.72);
+      backdrop-filter: blur(10px);
+    }
+    .sound-card{
+      width:min(520px, 92vw);
+      background: rgba(10,10,10,.88);
+      border:1px solid rgba(255,255,255,.12);
+      border-radius:18px;
+      padding:18px;
+      color:#fff;
+      font-family: Arial, sans-serif;
+      text-align:center;
+      box-shadow: 0 10px 40px rgba(0,0,0,.55);
+    }
+    .sound-card h2{ margin:0 0 8px 0; font-size:22px; }
+    .sound-btn{
+      margin-top:10px;
+      display:inline-block;
+      padding:10px 14px;
+      border-radius:12px;
+      background: rgba(0,170,255,.18);
+      border:1px solid rgba(0,170,255,.45);
+      cursor:pointer;
+      user-select:none;
+    }
+
+    #status {
+      position:fixed; right:14px; bottom:14px; z-index:9999;
+      color:rgba(255,255,255,.8);
+      font:12px/1.2 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      background:rgba(0,0,0,.35);
+      padding:8px 10px;
+      border-radius:10px;
+      pointer-events:none;
+      white-space:pre;
+    }
+
+    /* ✅ Karaoke captions overlay */
+    #cc {
+      position: fixed;
+      left: 50%;
+      bottom: 86px; /* above controls */
+      transform: translateX(-50%);
+      z-index: 12000;
+      width: min(1100px, 92vw);
+      text-align: center;
+      pointer-events: none;
+    }
+    #ccBox {
+      display: inline-block;
+      padding: 12px 16px;
+      border-radius: 16px;
+      background: rgba(0,0,0,.45);
+      backdrop-filter: blur(6px);
+      border: 1px solid rgba(255,255,255,.10);
+      box-shadow: 0 10px 40px rgba(0,0,0,.40);
+    }
+    #ccLine {
+      font: 800 30px/1.25 Arial, sans-serif;
+      letter-spacing: 0.2px;
+      color: rgba(255,255,255,.92);
+      text-shadow: 0 2px 12px rgba(0,0,0,.75);
+      white-space: normal;
+      word-wrap: break-word;
+    }
+    #ccLine .w {
+      display: inline-block;
+      padding: 0 2px;
+      transform: translateY(0);
+      transition: transform 90ms ease, opacity 90ms ease;
+      opacity: .82;
+    }
+    #ccLine .w.on {
+      opacity: 1;
+      transform: translateY(-2px) scale(1.06);
+      text-shadow: 0 0 16px rgba(0,170,255,.45), 0 2px 14px rgba(0,0,0,.75);
+      color: #fff;
+    }
+  </style>
+
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+</head>
+
+<body>
+  <div class="badge">
+    <a href="/freestyle/submit/">Submit</a>
+    <a href="/freestyle/control/freestyle/channel/main/">Manage (staff)</a>
+    <a href="/freestyle/creator/">Creator</a>
+  </div>
+
+  <img id="logo" class="idle" src="{% static 'freestyle/img/logo.png' %}" alt="Logo">
+  <div id="burst"></div>
+
+  <video
+    id="player"
+    autoplay
+    muted
+    playsinline
+    preload="auto"
+    controlslist="nodownload noplaybackrate noremoteplayback"
+    disablepictureinpicture
+  ></video>
+  <div class="click-shield" aria-hidden="true"></div>
+
+  <div class="tv-controls">
+    <button id="muteBtn" class="tv-btn" type="button">Unmute</button>
+    <div class="tv-vol">
+      <span>Vol</span>
+      <input id="volSlider" type="range" min="0" max="1" step="0.01" value="0.8">
+    </div>
+    <button id="fsBtn" class="tv-btn" type="button">Fullscreen</button>
+  </div>
+
+  <div id="soundGate" class="sound-gate">
+    <div class="sound-card">
+      <h2>Tap to Enter</h2>
+      <p style="margin:0 0 10px 0; opacity:.9;">Please confirm you agree to our Terms before entering.</p>
+
+      <label style="display:flex; gap:10px; align-items:flex-start; text-align:left; margin-bottom:10px; font-size:13px;">
+        <input id="agreeBox" type="checkbox" style="margin-top:3px;">
+        <span>I agree to the Terms, Privacy, and Content Policy.</span>
+      </label>
+
+      <div id="enterBtn" class="sound-btn" style="opacity:.45; pointer-events:none;">Enter</div>
+      <div style="margin-top:8px; font-size:12px; opacity:.7;">(Entering starts playback.)</div>
+    </div>
+  </div>
+
+  <div id="cc"><div id="ccBox"><div id="ccLine"></div></div></div>
+  <div id="status"></div>
+
+  <script>
+    const videoEl = document.getElementById("player");
+    const logoEl  = document.getElementById("logo");
+    const burstEl = document.getElementById("burst");
+    const statusEl = document.getElementById("status");
+
+    const ccLineEl = document.getElementById("ccLine");
+
+    const muteBtn   = document.getElementById("muteBtn");
+    const volSlider = document.getElementById("volSlider");
+    const fsBtn     = document.getElementById("fsBtn");
+
+    const gateEl   = document.getElementById("soundGate");
+    const agreeBox = document.getElementById("agreeBox");
+    const enterBtn = document.getElementById("enterBtn");
+
+    const nowUrl = "/api/freestyle/channel/main/now.json";
+
+    const POLL_MS = 12000;
+    const SWITCH_LOCK_MS = 2000;
+    const BIG_DRIFT_SEC = 6;
+
+    let hls = null;
+    let currentVideoId = null;
+    let switchLockUntil = 0;
+    let stingerStarted = false;
+
+    function nowMs(){ return performance.now(); }
+    function canSwitch(){ return nowMs() >= switchLockUntil; }
+    function lockSwitch(){ switchLockUntil = nowMs() + SWITCH_LOCK_MS; }
+    function setStatus(lines){ statusEl.textContent = lines.join("\n"); }
+
+    // --- captions state ---
+    let captionsVideoId = null;
+    let captionsWords = [];   // raw words
+    let captionsCues = [];    // grouped cues
+    let cueIndex = 0;
+
+    function hideGate(){ gateEl.style.display = "none"; }
+
+    agreeBox.addEventListener("change", () => {
+      enterBtn.style.opacity = agreeBox.checked ? "1" : ".45";
+      enterBtn.style.pointerEvents = agreeBox.checked ? "auto" : "none";
+    });
+
+    enterBtn.addEventListener("click", async () => {
+      videoEl.muted = false;
+      videoEl.volume = parseFloat(volSlider.value);
+      updateMuteButton();
+      try { await videoEl.play(); } catch(e) {}
+      hideGate();
+      syncNow().catch(()=>{});
+    });
+
+    function updateMuteButton(){ muteBtn.textContent = videoEl.muted ? "Unmute" : "Mute"; }
+
+    muteBtn.addEventListener("click", async () => {
+      videoEl.muted = !videoEl.muted;
+      updateMuteButton();
+      try { await videoEl.play(); } catch(e) {}
+    });
+
+    volSlider.addEventListener("input", () => {
+      videoEl.volume = parseFloat(volSlider.value);
+      if (videoEl.volume > 0) videoEl.muted = false;
+      updateMuteButton();
+    });
+
+    fsBtn.addEventListener("click", async () => {
+      try {
+        if (document.fullscreenElement) await document.exitFullscreen();
+        else await videoEl.requestFullscreen();
+      } catch(e) {}
+    });
+
+    // autoplay reliability
+    videoEl.muted = true;
+    videoEl.volume = parseFloat(volSlider.value);
+    updateMuteButton();
+
+    // locked TV lines
+    videoEl.controls = false;
+    videoEl.disablePictureInPicture = true;
+
+    async function forcePlay(){ try { await videoEl.play(); } catch(e) {} }
+    videoEl.addEventListener("pause", () => { setTimeout(forcePlay, 80); });
+
+    function destroyHls(){ if (hls) { hls.destroy(); hls = null; } }
+
+    function resetLogoCorner(){
+      logoEl.classList.remove("centering");
+      logoEl.classList.add("idle");
+      logoEl.style.left = "";
+    }
+
+    function boomSound(){
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = "sawtooth";
+        o.frequency.setValueAtTime(110, ctx.currentTime);
+        o.frequency.exponentialRampToValueAtTime(40, ctx.currentTime + 0.18);
+        g.gain.setValueAtTime(0.0001, ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.35, ctx.currentTime + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+        o.connect(g); g.connect(ctx.destination);
+        o.start(); o.stop(ctx.currentTime + 0.4);
+      } catch(e) {}
+    }
+
+    function burst(){
+      burstEl.innerHTML = "";
+      burstEl.style.display = "block";
+      const count = 26;
+      for (let i=0;i<count;i++){
+        const p = document.createElement("div");
+        p.className = "p";
+        const ang = Math.random() * Math.PI * 2;
+        const dist = 120 + Math.random() * 220;
+        const dx = Math.cos(ang) * dist;
+        const dy = Math.sin(ang) * dist;
+        p.style.setProperty("--dx", dx.toFixed(0) + "px");
+        p.style.setProperty("--dy", dy.toFixed(0) + "px");
+        p.style.width = (10 + Math.random()*14).toFixed(0) + "px";
+        p.style.height = p.style.width;
+        burstEl.appendChild(p);
+      }
+      setTimeout(() => { burstEl.style.display = "none"; burstEl.innerHTML = ""; }, 700);
+    }
+
+    function startStinger(){
+      if (stingerStarted) return;
+      stingerStarted = true;
+      logoEl.classList.remove("idle");
+      logoEl.classList.add("centering");
+    }
+
+    function explodeStinger(){
+      boomSound();
+      burst();
+      resetLogoCorner();
+    }
+
+    async function fetchNow(){
+      const res = await fetch(nowUrl, { cache: "no-store" });
+      if (!res.ok) throw new Error("now.json failed");
+      return await res.json();
+    }
+
+    function attachSource(item){
+      destroyHls();
+      const url = item.play_url;
+      const isHls = !!item.is_hls;
+
+      if (isHls) {
+        if (videoEl.canPlayType("application/vnd.apple.mpegurl")) {
+          videoEl.src = url;
+        } else if (window.Hls) {
+          hls = new Hls({ enableWorker:true });
+          hls.loadSource(url);
+          hls.attachMedia(videoEl);
+        } else {
+          throw new Error("HLS not supported in this browser.");
+        }
+      } else {
+        videoEl.src = url;
+      }
+    }
+
+    function seekTo(offsetSeconds){
+      let t = Math.max(0, Math.floor(offsetSeconds || 0));
+      if (isFinite(videoEl.duration) && videoEl.duration > 0) {
+        t = Math.min(t, Math.max(0, videoEl.duration - 0.35));
+      }
+      try { videoEl.currentTime = t; } catch(e) {}
+    }
+
+    // ---------- CAPTIONS ----------
+    function normWord(w){
+      const start = Number(w.start ?? w.s ?? 0);
+      const end   = Number(w.end ?? w.e ?? (start + 0.1));
+      const text  = String(w.word ?? w.text ?? w.w ?? "").trim();
+      return { start, end, text };
+    }
+
+    function buildCues(words){
+      // Group into “phrases” so we can highlight word-by-word.
+      // New cue when gap > 0.6s or punctuation ends a phrase.
+      const cues = [];
+      let cur = null;
+
+      for (const raw of words){
+        const w = normWord(raw);
+        if (!w.text) continue;
+
+        const gap = cur ? (w.start - cur.end) : 0;
+        const endsPhrase = /[.!?]$/.test(cur?.words?.[cur.words.length-1]?.text || "");
+        const newCue = !cur || gap > 0.6 || endsPhrase || (cur.words.length >= 12);
+
+        if (newCue){
+          if (cur) cues.push(cur);
+          cur = { start: w.start, end: w.end, words: [w] };
+        } else {
+          cur.words.push(w);
+          cur.end = w.end;
+        }
+      }
+      if (cur) cues.push(cur);
+      return cues;
+    }
+
+    async function loadCaptions(videoId){
+      if (!videoId) return;
+      if (captionsVideoId === videoId) return;
+
+      captionsVideoId = videoId;
+      captionsWords = [];
+      captionsCues = [];
+      cueIndex = 0;
+      ccLineEl.innerHTML = "";
+
+      try {
+        const res = await fetch(`/api/freestyle/video/${videoId}/captions.json`, { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        const words = (data.words || []);
+        if (!words.length) return;
+
+        captionsWords = words;
+        captionsCues = buildCues(words);
+        cueIndex = 0;
+      } catch(e) {}
+    }
+
+    function renderCue(cue, t){
+      if (!cue) { ccLineEl.innerHTML = ""; return; }
+
+      // find active word index
+      let active = -1;
+      for (let i=0;i<cue.words.length;i++){
+        const w = cue.words[i];
+        if (t >= w.start && t <= w.end + 0.02) { active = i; break; }
+      }
+
+      const html = cue.words.map((w, i) => {
+        const cls = (i === active) ? "w on" : "w";
+        const safe = w.text.replace(/</g,"&lt;").replace(/>/g,"&gt;");
+        return `<span class="${cls}">${safe}</span>`;
+      }).join(" ");
+
+      ccLineEl.innerHTML = html;
+    }
+
+    function tickCaptions(){
+      if (!captionsCues.length) return requestAnimationFrame(tickCaptions);
+
+      const t = Number(videoEl.currentTime || 0);
+
+      // move cueIndex forward/backward safely
+      while (cueIndex < captionsCues.length - 1 && t > captionsCues[cueIndex].end + 0.25) cueIndex++;
+      while (cueIndex > 0 && t < captionsCues[cueIndex].start - 0.25) cueIndex--;
+
+      const cue = captionsCues[cueIndex];
+      if (cue && t >= cue.start - 0.25 && t <= cue.end + 0.5) renderCue(cue, t);
+      else ccLineEl.innerHTML = "";
+
+      requestAnimationFrame(tickCaptions);
+    }
+    requestAnimationFrame(tickCaptions);
+    // ---------- END CAPTIONS ----------
+
+    async function switchTo(item, offsetSeconds){
+      lockSwitch();
+      stingerStarted = false;
+
+      videoEl.style.visibility = "hidden";
+      explodeStinger();
+      attachSource(item);
+
+      const onMeta = () => {
+        videoEl.removeEventListener("loadedmetadata", onMeta);
+        seekTo(offsetSeconds);
+        videoEl.style.visibility = "visible";
+        forcePlay();
+      };
+      videoEl.addEventListener("loadedmetadata", onMeta);
+
+      videoEl.load();
+      forcePlay();
+
+      // ✅ load captions for this video
+      loadCaptions(item.video_id).catch(()=>{});
+    }
+
+    async function applyServer(data){
+      const item = data.item;
+      const offset = data.offset_seconds || 0;
+      if (!item || !item.video_id || !item.play_url) return;
+
+      setStatus([
+        `live video_id: ${item.video_id}`,
+        `offset_seconds: ${offset}`,
+        `lock_ms: ${Math.max(0, Math.round(switchLockUntil - nowMs()))}`,
+      ]);
+
+      if (item.video_id !== currentVideoId) {
+        if (!canSwitch()) return;
+        currentVideoId = item.video_id;
+        await switchTo(item, offset);
+        return;
+      }
+
+      const diff = Math.abs((videoEl.currentTime || 0) - offset);
+      if (diff > BIG_DRIFT_SEC && !videoEl.seeking) {
+        seekTo(offset);
+      }
+    }
+
+    async function syncNow(){
+      const data = await fetchNow();
+      await applyServer(data);
+    }
+
+    // Prevent manual scrubbing/rewind: snap back to LIVE
+    videoEl.addEventListener("seeking", () => { syncNow().catch(()=>{}); });
+
+    // visual only
+    videoEl.addEventListener("timeupdate", () => {
+      if (!videoEl.duration || !isFinite(videoEl.duration)) return;
+      const remaining = videoEl.duration - videoEl.currentTime;
+      if (!stingerStarted && remaining <= 5.0 && remaining > 0) startStinger();
+    });
+
+    videoEl.addEventListener("ended", () => { syncNow().catch(()=>{}); });
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") {
+        syncNow().catch(()=>{});
+        forcePlay();
+      }
+    });
+
+    setInterval(() => { syncNow().catch(()=>{}); }, POLL_MS);
+
+    // Boot
+    syncNow().catch(err => {
+      console.error(err);
+      alert("Failed to load Live TV endpoint: " + nowUrl);
+    });
+  </script>
+</body>
+</html>
