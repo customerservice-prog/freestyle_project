@@ -1,19 +1,21 @@
-# Python
+# ---- Python ----
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
 
-# venv
+# ---- Virtualenv ----
 .venv/
 venv/
+ENV/
+env/
 
-# Django
+# ---- Django ----
 db.sqlite3
 staticfiles/
 media/
 
-# OS/IDE
+# ---- OS / IDE ----
 .DS_Store
 Thumbs.db
 .vscode/
+.idea/
