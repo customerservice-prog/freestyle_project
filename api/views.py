@@ -1,210 +1,145 @@
-import os
-import time
-import re
-import mimetypes
+from __future__ import annotations
 
-from django.http import JsonResponse, HttpResponse, StreamingHttpResponse
-from django.urls import reverse
+from django.http import JsonResponse
+from django.utils import timezone
+from django.views.decorators.http import require_GET
+from django.db.models import Q
 
 from freestyle.models import Channel, ChannelEntry, FreestyleVideo
 
-DEMO_URL = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
-
 
 def _safe_duration(v: FreestyleVideo) -> int:
-    # IMPORTANT: live schedule depends on this
-    d = int(v.duration_seconds or 0)
-    if d < 5:
-        d = 30
-    return d
+    # never allow 0 (would cause rapid looping)
+    try:
+        d = int(v.duration_seconds or 0)
+    except Exception:
+        d = 0
+    return max(1, d)
 
 
-def _video_to_item(v: FreestyleVideo):
+def _build_play_url(request, video: FreestyleVideo) -> str:
     """
-    ✅ KEY FIX:
-    If it's a local uploaded file, DO NOT return /media/... directly.
-    Return the ranged stream endpoint instead so seeking works (live TV won’t restart on refresh).
+    Always return an absolute URL when possible.
+    - If playback_url is set, use it (works best on Render).
+    - Else use video_file.url (works locally if MEDIA served; production needs persistent storage).
     """
-    if v.playback_url:
-        play_url = v.playback_url
-    elif v.video_file:
-        play_url = reverse("video_stream", args=[v.id])  # /api/freestyle/video/<id>/stream
-    else:
-        play_url = ""
+    if video.playback_url:
+        return video.playback_url
 
-    if not play_url:
-        return None
+    if video.video_file:
+        try:
+            # Make absolute so it works on Render domain too
+            return request.build_absolute_uri(video.video_file.url)
+        except Exception:
+            return ""
 
-    return {
-        "video_id": str(v.id),
-        "title": v.title,
-        "play_url": play_url,
-        "is_hls": (play_url.lower().endswith(".m3u8") or "m3u8" in play_url.lower()),
-        "duration_seconds": _safe_duration(v),
-    }
+    return ""
 
 
-def _get_playlist_items(slug: str):
-    channel, _ = Channel.objects.get_or_create(slug=slug, defaults={"name": slug})
-
+def _get_playlist(channel: Channel):
+    """
+    Prefer ChannelEntries if present & active; otherwise fallback to all published/approved videos.
+    """
     entries = (
         ChannelEntry.objects
-        .filter(channel=channel, active=True, video__status="published")
+        .filter(channel=channel, active=True)
         .select_related("video")
         .order_by("position", "id")
     )
 
-    items = []
-    if entries.exists():
-        for e in entries:
-            it = _video_to_item(e.video)
-            if it:
-                items.append(it)
-    else:
-        qs = FreestyleVideo.objects.filter(status="published").order_by("created_at", "id")
-        for v in qs:
-            it = _video_to_item(v)
-            if it:
-                items.append(it)
+    videos = [e.video for e in entries if e.video_id]
 
-    if not items:
-        items = [{
-            "video_id": "demo",
-            "title": "Demo",
-            "play_url": DEMO_URL,
-            "is_hls": False,
-            "duration_seconds": 30,
-        }]
+    if videos:
+        return videos
 
-    return channel, items
+    # fallback: everything that should play
+    videos = list(
+        FreestyleVideo.objects
+        .filter(Q(status="published") | Q(status="approved"))
+        .order_by("id")
+    )
+    return videos
 
 
-def channel_playlist_json(request, slug: str):
-    channel, items = _get_playlist_items(slug)
-    return JsonResponse({"channel": channel.slug, "count": len(items), "items": items})
-
-
-def channel_now_json(request, slug: str):
+def _compute_now(channel: Channel, videos: list[FreestyleVideo]):
     """
-    ✅ Live TV:
-    All devices see same video+time because server chooses based on a stable anchor.
+    Compute which video should be playing right now, based on a stable shared start time.
+    We use channel.created_at as the start anchor so refresh NEVER resets the schedule.
     """
-    channel, items = _get_playlist_items(slug)
+    if not videos:
+        return None, 0
 
-    total = sum(int(i.get("duration_seconds") or 0) for i in items)
+    durations = [_safe_duration(v) for v in videos]
+    total = sum(durations)
     if total <= 0:
-        return JsonResponse({"item": items[0], "offset_seconds": 0})
+        return None, 0
 
-    anchor = int(channel.created_at.timestamp())
-    now = int(time.time())
-    elapsed = (now - anchor) % total
+    start = channel.created_at or timezone.now()
+    now = timezone.now()
 
-    cum = 0
-    chosen = items[0]
-    offset = 0
+    elapsed = int((now - start).total_seconds())
+    # position in the loop across entire playlist
+    pos = elapsed % total
 
-    for it in items:
-        dur = int(it.get("duration_seconds") or 30)
-        if elapsed < cum + dur:
-            chosen = it
-            offset = max(0, elapsed - cum)
-            break
-        cum += dur
+    # pick the current video and offset
+    running = 0
+    for v, d in zip(videos, durations):
+        if running + d > pos:
+            offset = pos - running
+            return v, int(offset)
+        running += d
 
-    return JsonResponse({"item": chosen, "offset_seconds": int(offset)})
-
-
-# -----------------------------
-# ✅ Range streaming (THE FIX)
-# -----------------------------
-
-_RANGE_RE = re.compile(r"bytes=(\d*)-(\d*)")
-
-def _file_iterator(fileobj, length, chunk_size=1024 * 512):
-    remaining = length
-    while remaining > 0:
-        chunk = fileobj.read(min(chunk_size, remaining))
-        if not chunk:
-            break
-        remaining -= len(chunk)
-        yield chunk
-
-def video_stream(request, video_id: int):
-    """
-    Streams uploaded video with HTTP Range support (206 Partial Content).
-    This is what makes live-TV seeking work, so refresh does NOT restart.
-    """
-    try:
-        v = FreestyleVideo.objects.get(pk=video_id)
-    except FreestyleVideo.DoesNotExist:
-        return HttpResponse(status=404)
-
-    if not v.video_file:
-        return HttpResponse(status=404)
-
-    try:
-        path = v.video_file.path
-    except Exception:
-        return HttpResponse(status=404)
-
-    if not os.path.exists(path):
-        return HttpResponse(status=404)
-
-    file_size = os.path.getsize(path)
-    content_type, _ = mimetypes.guess_type(path)
-    if not content_type:
-        content_type = "video/mp4"
-
-    range_header = request.headers.get("Range") or request.META.get("HTTP_RANGE")
-    if not range_header:
-        # Full file
-        with open(path, "rb") as f:
-            resp = StreamingHttpResponse(_file_iterator(f, file_size), content_type=content_type)
-            resp["Content-Length"] = str(file_size)
-            resp["Accept-Ranges"] = "bytes"
-            return resp
-
-    m = _RANGE_RE.match(range_header.strip())
-    if not m:
-        return HttpResponse(status=416)
-
-    start_str, end_str = m.groups()
-    if start_str == "" and end_str == "":
-        return HttpResponse(status=416)
-
-    if start_str == "":
-        # suffix range: bytes=-500
-        suffix = int(end_str)
-        start = max(0, file_size - suffix)
-        end = file_size - 1
-    else:
-        start = int(start_str)
-        end = int(end_str) if end_str else file_size - 1
-
-    if start >= file_size:
-        return HttpResponse(status=416)
-
-    end = min(end, file_size - 1)
-    length = (end - start) + 1
-
-    f = open(path, "rb")
-    f.seek(start)
-
-    resp = StreamingHttpResponse(_file_iterator(f, length), status=206, content_type=content_type)
-    resp["Content-Length"] = str(length)
-    resp["Content-Range"] = f"bytes {start}-{end}/{file_size}"
-    resp["Accept-Ranges"] = "bytes"
-    return resp
+    # fallback (shouldn't happen)
+    return videos[0], 0
 
 
+@require_GET
+def channel_now_json(request, slug: str):
+    # Guarantee channel exists; created_at becomes the stable shared start point
+    channel, _ = Channel.objects.get_or_create(slug=slug, defaults={"name": slug})
+
+    videos = _get_playlist(channel)
+    video, offset = _compute_now(channel, videos)
+
+    if not video:
+        # Return 200 so frontend doesn't "alert fail"
+        return JsonResponse(
+            {"item": None, "offset_seconds": 0, "error": "no_videos"},
+            status=200
+        )
+
+    play_url = _build_play_url(request, video)
+    is_hls = (play_url.lower().endswith(".m3u8") or "m3u8" in play_url.lower())
+
+    # If we can't build a URL, still return 200 with item=null so UI can show status
+    if not play_url:
+        return JsonResponse(
+            {"item": None, "offset_seconds": 0, "error": f"video_{video.id}_missing_url"},
+            status=200
+        )
+
+    return JsonResponse(
+        {
+            "item": {
+                "video_id": video.id,
+                "play_url": play_url,
+                "is_hls": is_hls,
+            },
+            "offset_seconds": offset,
+        },
+        status=200
+    )
+
+
+@require_GET
 def video_captions_json(request, video_id: int):
     try:
-        v = FreestyleVideo.objects.get(pk=video_id)
+        v = FreestyleVideo.objects.get(id=video_id)
     except FreestyleVideo.DoesNotExist:
-        return JsonResponse({"video_id": video_id, "words": []})
+        return JsonResponse({"words": []}, status=404)
 
     words = v.captions_words or []
     if not isinstance(words, list):
         words = []
 
-    return JsonResponse({"video_id": v.id, "words": words})
+    return JsonResponse({"video_id": v.id, "words": words}, status=200)
