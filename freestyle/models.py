@@ -1,7 +1,5 @@
-# freestyle/models.py
 from django.db import models
 from django.utils import timezone
-
 
 class Channel(models.Model):
     slug = models.SlugField(unique=True)
@@ -14,32 +12,36 @@ class Channel(models.Model):
 
 class FreestyleVideo(models.Model):
     title = models.CharField(max_length=255)
+
+    # Upload file (local/media) OR use playback_url (S3/R2/YouTube direct/HLS, etc.)
     video_file = models.FileField(upload_to="freestyle/videos/", blank=True, null=True)
     playback_url = models.URLField(blank=True, default="")
+
     duration_seconds = models.PositiveIntegerField(blank=True, null=True)
+
+    # Optional captions words: [{"w":"hello","s":1.2,"e":1.6}, ...]
+    captions_words = models.JSONField(blank=True, null=True, default=list)
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return self.title
 
-    @property
-    def best_play_url(self) -> str:
+    def play_url(self):
+        # playback_url overrides uploaded file URL
         if self.playback_url:
             return self.playback_url
         if self.video_file:
-            try:
-                return self.video_file.url
-            except Exception:
-                return ""
+            return self.video_file.url
         return ""
 
 
 class ChannelEntry(models.Model):
     channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name="entries")
     video = models.ForeignKey(FreestyleVideo, on_delete=models.SET_NULL, null=True, blank=True)
+
     position = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)
-    has_played_once = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["position", "id"]
@@ -63,20 +65,17 @@ class ChatMessage(models.Model):
 
 
 class VideoReaction(models.Model):
-    """
-    One vote per (video_id, client_id). reaction = 'fire' or 'nah'
-    """
     channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name="video_reactions")
     video = models.ForeignKey(FreestyleVideo, on_delete=models.CASCADE, related_name="reactions")
     client_id = models.CharField(max_length=64, db_index=True)
-    reaction = models.CharField(max_length=32, db_index=True)
+    reaction = models.CharField(max_length=32, db_index=True)  # "fire" or "nah"
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["-id"]
         constraints = [
-            models.UniqueConstraint(fields=["video", "client_id"], name="uniq_vote_per_video_client")
+            models.UniqueConstraint(fields=["channel", "video", "client_id"], name="uniq_vote_per_client_per_video")
         ]
 
     def __str__(self):
-        return f"{self.reaction} v={self.video_id} cid={self.client_id}"
+        return f"{self.reaction} on {self.video_id} by {self.client_id}"
