@@ -1,199 +1,211 @@
-import os
-import time
-import re
-import mimetypes
+# tvapi/views.py
+import json
+from django.http import JsonResponse, HttpResponseBadRequest
+from django.utils import timezone
+from django.views.decorators.csrf import csrf_exempt
+from django.db.models import Count
+from freestyle.models import Channel, ChannelEntry, FreestyleVideo, ChatMessage, VideoReaction
 
-from django.http import JsonResponse, HttpResponse, StreamingHttpResponse
-from django.urls import reverse
 
-from freestyle.models import Channel, ChannelEntry, FreestyleVideo
+def _is_hls(url: str) -> bool:
+    u = (url or "").lower()
+    return ".m3u8" in u
 
-DEMO_URL = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
 
-_RANGE_RE = re.compile(r"bytes=(\d*)-(\d*)")
+def _get_channel(channel_slug: str) -> Channel:
+    return Channel.objects.get(slug=channel_slug)
 
-def _safe_duration(v: FreestyleVideo) -> int:
-    d = int(v.duration_seconds or 0)
-    if d < 5:
-        d = 30
-    return d
 
-def _file_iterator(fileobj, length, chunk_size=1024 * 512):
-    remaining = length
-    while remaining > 0:
-        chunk = fileobj.read(min(chunk_size, remaining))
-        if not chunk:
-            break
-        remaining -= len(chunk)
-        yield chunk
-
-def _video_to_item(v: FreestyleVideo):
-    """
-    ✅ KEY FIX for LIVE TV locally:
-    If uploaded file exists, DO NOT return /media/... directly.
-    Return our ranged stream endpoint so seeking works.
-    """
-    if v.playback_url:
-        play_url = v.playback_url
-    elif v.video_file:
-        play_url = reverse("video_stream", args=[v.id])  # /api/freestyle/video/<id>/stream
-    else:
-        play_url = ""
-
-    if not play_url:
-        return None
-
-    u = play_url.lower()
-    is_hls = u.endswith(".m3u8") or "m3u8" in u
-
-    return {
-        "video_id": str(v.id),
-        "title": v.title,
-        "play_url": play_url,
-        "is_hls": is_hls,
-        "duration_seconds": _safe_duration(v),
-    }
-
-def _get_playlist_items(slug: str):
-    channel, _ = Channel.objects.get_or_create(slug=slug, defaults={"name": slug})
-
-    entries = (
-        ChannelEntry.objects
-        .filter(channel=channel, active=True, video__status="published")
-        .select_related("video")
+def _get_active_entries(channel: Channel):
+    return list(
+        ChannelEntry.objects.select_related("video")
+        .filter(channel=channel, is_active=True, video__isnull=False)
         .order_by("position", "id")
     )
 
-    items = []
-    if entries.exists():
-        for e in entries:
-            it = _video_to_item(e.video)
-            if it:
-                items.append(it)
-    else:
-        qs = FreestyleVideo.objects.filter(status="published").order_by("created_at", "id")
-        for v in qs:
-            it = _video_to_item(v)
-            if it:
-                items.append(it)
 
-    if not items:
-        items = [{
-            "video_id": "demo",
-            "title": "Demo",
-            "play_url": DEMO_URL,
-            "is_hls": False,
-            "duration_seconds": 30,
-        }]
-
-    return channel, items
-
-def channel_playlist_json(request, slug: str):
-    channel, items = _get_playlist_items(slug)
-    return JsonResponse({"channel": channel.slug, "count": len(items), "items": items})
-
-def channel_now_json(request, slug: str):
+def _pick_current(entries, elapsed_seconds: int):
     """
-    ✅ Live TV:
-    Everyone sees same thing based on a stable anchor time.
+    Loop through entries based on duration_seconds.
+    If duration_seconds missing, assume 300s per clip.
     """
-    channel, items = _get_playlist_items(slug)
+    if not entries:
+        return None, 0
 
-    total = sum(int(i.get("duration_seconds") or 0) for i in items)
+    durations = []
+    total = 0
+    for e in entries:
+        d = e.video.duration_seconds or 300
+        d = max(5, int(d))
+        durations.append(d)
+        total += d
+
     if total <= 0:
-        return JsonResponse({"item": items[0], "offset_seconds": 0})
+        return entries[0], 0
 
-    anchor = int(channel.created_at.timestamp())
-    now = int(time.time())
-    elapsed = (now - anchor) % total
+    t = elapsed_seconds % total
+    acc = 0
+    for e, d in zip(entries, durations):
+        if acc + d > t:
+            return e, int(t - acc)
+        acc += d
 
-    cum = 0
-    chosen = items[0]
-    offset = 0
+    return entries[-1], 0
 
-    for it in items:
-        dur = int(it.get("duration_seconds") or 30)
-        if elapsed < cum + dur:
-            chosen = it
-            offset = max(0, elapsed - cum)
-            break
-        cum += dur
 
-    return JsonResponse({"item": chosen, "offset_seconds": int(offset)})
-
-def video_stream(request, video_id: int):
-    """
-    ✅ HTTP Range streaming endpoint (206 Partial Content)
-    This makes seeking work so refresh DOES NOT restart like normal MP4.
-    """
+def channel_now_json(request, channel_slug):
     try:
-        v = FreestyleVideo.objects.get(pk=video_id)
-    except FreestyleVideo.DoesNotExist:
-        return HttpResponse(status=404)
+        channel = _get_channel(channel_slug)
+    except Channel.DoesNotExist:
+        return JsonResponse({"ok": False, "error": "channel_not_found"}, status=404)
 
-    if not v.video_file:
-        return HttpResponse(status=404)
+    entries = _get_active_entries(channel)
+    if not entries:
+        return JsonResponse({"ok": True, "item": None, "offset_seconds": 0})
 
-    try:
-        path = v.video_file.path
-    except Exception:
-        return HttpResponse(status=404)
+    elapsed = int((timezone.now() - channel.started_at).total_seconds())
+    entry, offset = _pick_current(entries, elapsed)
 
-    if not os.path.exists(path):
-        return HttpResponse(status=404)
+    if not entry or not entry.video:
+        return JsonResponse({"ok": True, "item": None, "offset_seconds": 0})
 
-    file_size = os.path.getsize(path)
-    content_type, _ = mimetypes.guess_type(path)
-    if not content_type:
-        content_type = "video/mp4"
+    play_url = entry.video.best_play_url
+    if not play_url:
+        return JsonResponse({"ok": False, "error": "missing_play_url"}, status=500)
 
-    range_header = request.headers.get("Range") or request.META.get("HTTP_RANGE")
-    if not range_header:
-        with open(path, "rb") as f:
-            resp = StreamingHttpResponse(_file_iterator(f, file_size), content_type=content_type)
-            resp["Content-Length"] = str(file_size)
-            resp["Accept-Ranges"] = "bytes"
-            return resp
+    payload = {
+        "ok": True,
+        "item": {
+            "video_id": entry.video_id,
+            "title": entry.video.title,
+            "play_url": play_url,
+            "is_hls": _is_hls(play_url),
+        },
+        "offset_seconds": offset,
+    }
+    return JsonResponse(payload)
 
-    m = _RANGE_RE.match(range_header.strip())
-    if not m:
-        return HttpResponse(status=416)
-
-    start_str, end_str = m.groups()
-    if start_str == "" and end_str == "":
-        return HttpResponse(status=416)
-
-    if start_str == "":
-        suffix = int(end_str)
-        start = max(0, file_size - suffix)
-        end = file_size - 1
-    else:
-        start = int(start_str)
-        end = int(end_str) if end_str else file_size - 1
-
-    if start >= file_size:
-        return HttpResponse(status=416)
-
-    end = min(end, file_size - 1)
-    length = (end - start) + 1
-
-    f = open(path, "rb")
-    f.seek(start)
-
-    resp = StreamingHttpResponse(_file_iterator(f, length), status=206, content_type=content_type)
-    resp["Content-Length"] = str(length)
-    resp["Content-Range"] = f"bytes {start}-{end}/{file_size}"
-    resp["Accept-Ranges"] = "bytes"
-    return resp
 
 def video_captions_json(request, video_id: int):
+    # Your TV HTML expects: { words: [{w,s,e}, ...] }
+    # If you don't have captions stored yet, return empty list.
     try:
-        v = FreestyleVideo.objects.get(pk=video_id)
+        FreestyleVideo.objects.get(id=video_id)
     except FreestyleVideo.DoesNotExist:
-        return JsonResponse({"video_id": video_id, "words": []})
+        return JsonResponse({"ok": False, "error": "video_not_found"}, status=404)
 
-    words = v.captions_words or []
-    if not isinstance(words, list):
-        words = []
+    return JsonResponse({"ok": True, "words": []})
 
-    return JsonResponse({"video_id": v.id, "words": words})
+
+def chat_messages_json(request, channel_slug):
+    try:
+        channel = _get_channel(channel_slug)
+    except Channel.DoesNotExist:
+        return JsonResponse({"ok": False, "error": "channel_not_found"}, status=404)
+
+    after_id = int(request.GET.get("after_id", "0") or 0)
+    qs = (
+        ChatMessage.objects.filter(channel=channel, id__gt=after_id)
+        .order_by("id")[:50]
+    )
+
+    items = []
+    for m in qs:
+        items.append({"id": m.id, "username": m.username, "message": m.message})
+
+    return JsonResponse({"ok": True, "items": items})
+
+
+@csrf_exempt
+def chat_send(request, channel_slug):
+    if request.method != "POST":
+        return HttpResponseBadRequest("POST required")
+
+    try:
+        channel = _get_channel(channel_slug)
+    except Channel.DoesNotExist:
+        return JsonResponse({"ok": False, "error": "channel_not_found"}, status=404)
+
+    try:
+        data = json.loads(request.body.decode("utf-8") or "{}")
+    except Exception:
+        return JsonResponse({"ok": False, "error": "bad_json"}, status=400)
+
+    username = (data.get("username") or "anon")[:80]
+    message = (data.get("message") or "").strip()
+    if not message:
+        return JsonResponse({"ok": False, "error": "empty_message"}, status=400)
+
+    ChatMessage.objects.create(channel=channel, username=username, message=message[:280])
+    return JsonResponse({"ok": True})
+
+
+def reactions_state(request, channel_slug):
+    try:
+        channel = _get_channel(channel_slug)
+    except Channel.DoesNotExist:
+        return JsonResponse({"ok": False, "error": "channel_not_found"}, status=404)
+
+    video_id = request.GET.get("video_id")
+    if not video_id:
+        return JsonResponse({"ok": False, "error": "missing_video_id"}, status=400)
+
+    try:
+        video = FreestyleVideo.objects.get(id=int(video_id))
+    except Exception:
+        return JsonResponse({"ok": False, "error": "video_not_found"}, status=404)
+
+    counts_qs = (
+        VideoReaction.objects.filter(channel=channel, video=video)
+        .values("reaction")
+        .annotate(c=Count("id"))
+    )
+    counts = {"fire": 0, "nah": 0}
+    for row in counts_qs:
+        r = row["reaction"]
+        if r in counts:
+            counts[r] = row["c"]
+
+    client_id = request.headers.get("X-Client-Id", "") or ""
+    voted = False
+    if client_id:
+        voted = VideoReaction.objects.filter(video=video, client_id=client_id).exists()
+
+    return JsonResponse({"ok": True, "counts": counts, "voted": voted})
+
+
+@csrf_exempt
+def reactions_vote(request, channel_slug):
+    if request.method != "POST":
+        return HttpResponseBadRequest("POST required")
+
+    try:
+        channel = _get_channel(channel_slug)
+    except Channel.DoesNotExist:
+        return JsonResponse({"ok": False, "error": "channel_not_found"}, status=404)
+
+    try:
+        data = json.loads(request.body.decode("utf-8") or "{}")
+    except Exception:
+        return JsonResponse({"ok": False, "error": "bad_json"}, status=400)
+
+    video_id = data.get("video_id")
+    reaction = (data.get("reaction") or "").strip().lower()
+    client_id = (data.get("client_id") or "").strip()
+
+    if not video_id or not client_id or reaction not in ("fire", "nah"):
+        return JsonResponse({"ok": False, "error": "bad_request"}, status=400)
+
+    try:
+        video = FreestyleVideo.objects.get(id=int(video_id))
+    except Exception:
+        return JsonResponse({"ok": False, "error": "video_not_found"}, status=404)
+
+    obj, created = VideoReaction.objects.get_or_create(
+        channel=channel, video=video, client_id=client_id,
+        defaults={"reaction": reaction},
+    )
+    if not created:
+        return JsonResponse({"ok": False, "already_voted": True})
+
+    return JsonResponse({"ok": True})

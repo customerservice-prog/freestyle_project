@@ -1,3 +1,4 @@
+# config/settings.py
 from pathlib import Path
 import os
 import dj_database_url
@@ -6,11 +7,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = os.environ.get("SECRET_KEY", "dev-insecure-change-me")
 
+
 def _env_bool(name: str, default: bool = False) -> bool:
     val = os.environ.get(name)
     if val is None:
         return default
     return val.strip().lower() in ("1", "true", "yes", "on")
+
 
 DEBUG = _env_bool("DEBUG", False)
 
@@ -30,9 +33,8 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
 
-    # ✅ your apps
     "freestyle",
-    "tvapi",   # ✅ use this, NOT "api"
+    "tvapi",
 ]
 
 MIDDLEWARE = [
@@ -104,7 +106,6 @@ MEDIA_ROOT = os.environ.get("MEDIA_ROOT", str(BASE_DIR / "media"))
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# Security behind proxy (Render)
 if not DEBUG:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
     SECURE_SSL_REDIRECT = True

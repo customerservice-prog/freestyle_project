@@ -1,13 +1,16 @@
+# tvapi/urls.py
 from django.urls import path
 from . import views
 
+app_name = "tvapi"
+
 urlpatterns = [
-    path("freestyle/channel/<slug:slug>/now.json", views.channel_now_json, name="channel_now_json"),
-    path("freestyle/channel/<slug:slug>/playlist.json", views.channel_playlist_json, name="channel_playlist_json"),
+    path("freestyle/channel/<slug:channel_slug>/now.json", views.channel_now_json, name="channel_now"),
+    path("freestyle/video/<int:video_id>/captions.json", views.video_captions_json, name="video_captions"),
 
-    # ✅ REQUIRED for true "live TV" locally (range seeking)
-    path("freestyle/video/<int:video_id>/stream", views.video_stream, name="video_stream"),
+    path("freestyle/channel/<slug:channel_slug>/chat/messages.json", views.chat_messages_json, name="chat_messages"),
+    path("freestyle/channel/<slug:channel_slug>/chat/send/", views.chat_send, name="chat_send"),
 
-    # optional captions
-    path("freestyle/video/<int:video_id>/captions.json", views.video_captions_json, name="video_captions_json"),
+    path("freestyle/channel/<slug:channel_slug>/reactions/state.json", views.reactions_state, name="reactions_state"),
+    path("freestyle/channel/<slug:channel_slug>/reactions/vote/", views.reactions_vote, name="reactions_vote"),
 ]
