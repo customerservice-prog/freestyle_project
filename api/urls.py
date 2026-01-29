@@ -2,9 +2,14 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-    # LIVE TV "now playing"
-    path("freestyle/channel/<slug:slug>/now.json", views.channel_now_json, name="channel_now_json"),
+    path("freestyle/channel/<slug:channel>/now.json", views.api_now, name="api_now"),
+    path("freestyle/video/<int:video_id>/captions.json", views.api_captions, name="api_captions"),
 
-    # Captions
-    path("freestyle/video/<int:video_id>/captions.json", views.video_captions_json, name="video_captions_json"),
+    # chat
+    path("chat/<slug:channel>/latest.json", views.api_chat_latest, name="api_chat_latest"),
+    path("chat/<slug:channel>/post.json", views.api_chat_post, name="api_chat_post"),
+
+    # reactions
+    path("reactions/<slug:channel>/<slug:video_id>/counts.json", views.api_reaction_counts, name="api_reaction_counts"),
+    path("reactions/<slug:channel>/<slug:video_id>/vote.json", views.api_reaction_vote, name="api_reaction_vote"),
 ]

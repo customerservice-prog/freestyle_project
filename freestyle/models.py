@@ -1,11 +1,6 @@
 from django.conf import settings
 from django.db import models
-from django.utils import timezone
 
-# inside FreestyleVideo:
-captions_words = models.JSONField(blank=True, null=True, default=list)
-captions_model = models.CharField(max_length=50, blank=True, default="")
-captions_updated_at = models.DateTimeField(blank=True, null=True)
 
 class CreatorProfile(models.Model):
     user = models.OneToOneField(
@@ -46,8 +41,7 @@ class FreestyleVideo(models.Model):
         related_name="freestyle_videos",
     )
 
-    # --- Captions ---
-    # Stored as list of { "w": "word", "s": 0.123, "e": 0.456 }
+    # Captions: list of {"w": "...", "s": 0.12, "e": 0.34}
     captions_words = models.JSONField(blank=True, null=True, default=list)
     captions_updated_at = models.DateTimeField(blank=True, null=True)
 
@@ -72,9 +66,12 @@ class FreestyleVideo(models.Model):
 
 
 class Channel(models.Model):
-    name = models.CharField(max_length=100)
-    slug = models.SlugField(unique=True)
+    name = models.CharField(max_length=100, default="Main")
+    slug = models.SlugField(unique=True, default="main")
     created_at = models.DateTimeField(auto_now_add=True)
+
+    # Optional: when channel started “broadcasting”
+    started_at = models.DateTimeField(blank=True, null=True)
 
     def __str__(self):
         return self.slug
@@ -87,6 +84,7 @@ class ChannelEntry(models.Model):
     position = models.PositiveIntegerField(default=0, db_index=True)
     active = models.BooleanField(default=True)
 
+    # These fields MUST exist (your admin complained they didn’t)
     has_played_once = models.BooleanField(default=False)
     play_count = models.PositiveIntegerField(default=0)
 
@@ -94,6 +92,7 @@ class ChannelEntry(models.Model):
 
     class Meta:
         indexes = [models.Index(fields=["channel", "active", "position"])]
+        ordering = ["position", "id"]
 
     def __str__(self):
         return f"{self.channel.slug} #{self.position} -> {self.video_id}"
@@ -130,3 +129,51 @@ class FreestyleSubmission(models.Model):
 
     def __str__(self):
         return f"{self.id}: {self.title} ({self.status})"
+
+
+# ---------------------------
+# LIVE CHAT (global per channel)
+# ---------------------------
+class ChatMessage(models.Model):
+    channel = models.CharField(max_length=64, default="main", db_index=True)
+    username = models.CharField(max_length=48)
+    message = models.CharField(max_length=280)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["channel", "id"]),
+            models.Index(fields=["channel", "created_at"]),
+        ]
+        ordering = ["id"]
+
+    def __str__(self):
+        return f"[{self.channel}] {self.username}: {self.message[:40]}"
+
+
+# ---------------------------
+# REACTIONS (one per video per device/client_id)
+# ---------------------------
+class ChatReaction(models.Model):
+    REACTION_CHOICES = [
+        ("fire", "Fire"),
+        ("nah", "Nah"),
+    ]
+
+    channel = models.CharField(max_length=64, default="main", db_index=True)
+    video_id = models.CharField(max_length=32, db_index=True)
+    client_id = models.CharField(max_length=80, db_index=True)
+    reaction = models.CharField(max_length=10, choices=REACTION_CHOICES)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["video_id", "client_id"], name="uniq_vote_per_video_per_client")
+        ]
+        indexes = [
+            models.Index(fields=["channel", "video_id"]),
+            models.Index(fields=["video_id", "reaction"]),
+        ]
+
+    def __str__(self):
+        return f"{self.video_id} {self.client_id} {self.reaction}"
