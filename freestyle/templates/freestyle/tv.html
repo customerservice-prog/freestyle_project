@@ -6,7 +6,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Freestyle TV</title>
 
-  <link rel="icon" href="{% static 'freestyle/logo.png' %}">
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="{% static 'freestyle/logo.png' %}">
+
+  <!-- CSS (static) -->
   <link rel="stylesheet" href="{% static 'freestyle/tv.css' %}">
 </head>
 
@@ -92,7 +95,7 @@
       <button id="adClose" class="ad-close" type="button" aria-label="Close ad">✕</button>
     </div>
 
-    <!-- ENTER OVERLAY (FULL TERMS SUMMARY) -->
+    <!-- ENTER OVERLAY -->
     <div id="enterOverlay" class="enter-overlay is-hidden">
       <div class="enter-card">
         <h2>Tap to Enter</h2>
@@ -107,6 +110,7 @@
             <li>We may remove content at any time.</li>
           </ul>
 
+          <!-- Use Django URLs if you have these routes; otherwise keep /terms and /privacy -->
           <a class="enter-link" href="/terms" target="_blank" rel="noopener">Terms</a>
           <span class="enter-dot">•</span>
           <a class="enter-link" href="/privacy" target="_blank" rel="noopener">Privacy</a>
@@ -127,6 +131,7 @@
 
   </div>
 
-  <script src="{% static 'freestyle/tv.js' %}"></script>
+  <!-- JS (static) -->
+  <script defer src="{% static 'freestyle/tv.js' %}"></script>
 </body>
 </html>

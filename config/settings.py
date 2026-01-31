@@ -4,31 +4,66 @@ import os
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# --- Core ---
-# For production, set this in your environment:
-#   set DJANGO_SECRET_KEY=your-secret
-SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-only-change-me")
-DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
 
-ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
+# -------------------------
+# Helpers
+# -------------------------
+def env(name: str, default: str | None = None) -> str | None:
+    # supports NAME or DJANGO_NAME
+    return os.environ.get(name, os.environ.get(f"DJANGO_{name}", default))
 
-# --- Applications ---
+
+def env_bool(name: str, default: str = "0") -> bool:
+    val = (env(name, default) or "").strip().lower()
+    return val in ("1", "true", "yes", "y", "on")
+
+
+def split_csv(value: str) -> list[str]:
+    # removes spaces anywhere, then splits by comma
+    cleaned = (value or "").replace(" ", "")
+    return [x for x in cleaned.split(",") if x]
+
+
+# -------------------------
+# Core
+# -------------------------
+SECRET_KEY = env("SECRET_KEY", "dev-only-change-me")
+DEBUG = env_bool("DEBUG", "1")
+
+ALLOWED_HOSTS = split_csv(env("ALLOWED_HOSTS", "127.0.0.1,localhost"))
+
+# Render provides this automatically (very useful)
+render_host = (env("RENDER_EXTERNAL_HOSTNAME") or "").strip()
+if render_host and render_host not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append(render_host)
+
+# (Optional) allow Render internal health checks sometimes hitting via .onrender.com
+# If you DO NOT want this, remove it.
+if ".onrender.com" not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append(".onrender.com")
+
+
+# -------------------------
+# Applications
+# -------------------------
 INSTALLED_APPS = [
-    # Django
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-
-    # Your apps
     "freestyle",
     "tvapi",
 ]
 
+
+# -------------------------
+# Middleware
+# -------------------------
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",  # IMPORTANT for Render static
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -37,12 +72,16 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
+
 ROOT_URLCONF = "config.urls"
 
+
+# -------------------------
+# Templates
+# -------------------------
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        # If you have project-level templates folder:
         "DIRS": [BASE_DIR / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {
@@ -56,9 +95,13 @@ TEMPLATES = [
     },
 ]
 
+
 WSGI_APPLICATION = "config.wsgi.application"
 
-# --- Database ---
+
+# -------------------------
+# Database
+# -------------------------
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
@@ -66,7 +109,10 @@ DATABASES = {
     }
 }
 
-# --- Password validation ---
+
+# -------------------------
+# Password validation
+# -------------------------
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
@@ -74,30 +120,50 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
-# --- Internationalization ---
+
+# -------------------------
+# Internationalization
+# -------------------------
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
 
-# --- Static files (CSS, JS, Images) ---
-STATIC_URL = "static/"
-# Your repo has /static and also a /staticfiles folder
-STATICFILES_DIRS = [
-    BASE_DIR / "static",
-]
+
+# -------------------------
+# Static files
+# -------------------------
+STATIC_URL = "/static/"                 # MUST be leading + trailing slash
+STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
-# --- Media (uploads: videos, captions, etc.) ---
+# Only use Manifest storage in production (collectstatic must run)
+if not DEBUG:
+    STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+
+
+# -------------------------
+# Media
+# -------------------------
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
-# --- Defaults ---
-DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# --- Dev helpers (optional but handy) ---
-# If you serve API calls from the same host, you can leave this alone.
-CSRF_TRUSTED_ORIGINS = [
-    "http://127.0.0.1:8000",
-    "http://localhost:8000",
-]
+# -------------------------
+# CSRF
+# -------------------------
+csrf_env = env("CSRF_TRUSTED_ORIGINS")
+if csrf_env:
+    CSRF_TRUSTED_ORIGINS = [x.strip() for x in csrf_env.split(",") if x.strip()]
+else:
+    CSRF_TRUSTED_ORIGINS = [
+        "http://127.0.0.1:8000",
+        "http://localhost:8000",
+        "http://127.0.0.1:8001",
+        "http://localhost:8001",
+    ]
+    if render_host:
+        CSRF_TRUSTED_ORIGINS.append(f"https://{render_host}")
+
+
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
