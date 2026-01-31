@@ -1,3 +1,4 @@
+# config/settings.py
 from pathlib import Path
 import os
 import dj_database_url
@@ -8,20 +9,20 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # -------------------------
 # Helpers
 # -------------------------
-def env(name: str, default: str | None = None) -> str | None:
+def env(name: str, default=None):
     """
-    Supports either NAME or DJANGO_NAME environment variables.
+    Supports NAME or DJANGO_NAME.
     Example: SECRET_KEY or DJANGO_SECRET_KEY
     """
-    return os.environ.get(name) or os.environ.get(f"DJANGO_{name}") or default
+    return os.environ.get(name, os.environ.get(f"DJANGO_{name}", default))
 
 
-def env_bool(name: str, default: str = "0") -> bool:
-    val = (env(name, default) or "").strip().lower()
+def env_bool(name: str, default="0") -> bool:
+    val = str(env(name, default)).strip().lower()
     return val in ("1", "true", "yes", "y", "on")
 
 
-def split_csv(value: str) -> list[str]:
+def split_csv(value) -> list[str]:
     cleaned = (value or "").replace(" ", "")
     return [x for x in cleaned.split(",") if x]
 
@@ -30,7 +31,7 @@ def split_csv(value: str) -> list[str]:
 # Core
 # -------------------------
 SECRET_KEY = env("SECRET_KEY", "dev-only-change-me")
-DEBUG = env_bool("DEBUG", "1")
+DEBUG = env_bool("DEBUG", "0")
 
 ALLOWED_HOSTS = split_csv(env("ALLOWED_HOSTS", "127.0.0.1,localhost"))
 
@@ -38,7 +39,7 @@ render_host = (env("RENDER_EXTERNAL_HOSTNAME") or "").strip()
 if render_host and render_host not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append(render_host)
 
-# Allow Render internal hostnames / health checks
+# Allow Render internal/healthcheck hostnames
 if ".onrender.com" not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append(".onrender.com")
 
@@ -53,11 +54,8 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-
     "freestyle",
-
-    # Only include this if you actually use tvapi right now.
-    # If tvapi is removed from urls.py and not used, keep it commented.
+    # only include tvapi if you use it
     # "tvapi",
 ]
 
@@ -67,7 +65,7 @@ INSTALLED_APPS = [
 # -------------------------
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",  # static on Render
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -99,14 +97,13 @@ TEMPLATES = [
     },
 ]
 
-
 WSGI_APPLICATION = "config.wsgi.application"
 
 
 # -------------------------
 # Database
 # -------------------------
-# Default local fallback (SQLite)
+# Local fallback
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
@@ -114,13 +111,13 @@ DATABASES = {
     }
 }
 
-# Render Postgres (your shell shows DATABASE_URL exists)
+# Render Postgres
 database_url = env("DATABASE_URL")
 if database_url:
     DATABASES["default"] = dj_database_url.parse(
         database_url,
         conn_max_age=600,
-        ssl_require=True,
+        ssl_require=False,  # Render internal network is fine; keep False to avoid SSL mismatch errors
     )
 
 
@@ -148,34 +145,24 @@ USE_TZ = True
 # Static files
 # -------------------------
 STATIC_URL = "/static/"
-STATIC_ROOT = BASE_DIR / "staticfiles"
 STATICFILES_DIRS = [BASE_DIR / "static"]
+STATIC_ROOT = BASE_DIR / "staticfiles"
 
-# Django 5+ recommended storage setting
-# In DEBUG, don't use Manifest (it can break if collectstatic not run)
-if DEBUG:
-    STORAGES = {
-        "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
-        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
-    }
-else:
-    STORAGES = {
-        "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
-        "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
-    }
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
+}
 
 
 # -------------------------
-# Media uploads
+# Media (uploads)
 # -------------------------
 MEDIA_URL = "/media/"
-# Local: BASE_DIR/media
-# Render: set MEDIA_ROOT=/var/data/media (Disk mount)
 MEDIA_ROOT = Path(env("MEDIA_ROOT", str(BASE_DIR / "media")))
 
 
 # -------------------------
-# CSRF / Proxy SSL
+# CSRF / proxy
 # -------------------------
 csrf_env = env("CSRF_TRUSTED_ORIGINS")
 if csrf_env:
@@ -190,13 +177,11 @@ else:
     if render_host:
         CSRF_TRUSTED_ORIGINS.append(f"https://{render_host}")
 
-# Render is behind a proxy (https outside, http inside)
 if not DEBUG:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
     USE_X_FORWARDED_HOST = True
     CSRF_COOKIE_SECURE = True
     SESSION_COOKIE_SECURE = True
-    SECURE_SSL_REDIRECT = False  # Render terminates SSL already
-
+    SECURE_SSL_REDIRECT = False  # Render already terminates SSL
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
