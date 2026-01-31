@@ -3,7 +3,7 @@ from django.http import JsonResponse, HttpResponseBadRequest
 from django.views.decorators.http import require_GET, require_POST
 from django.utils import timezone
 from django.db.models import Count
-from freestyle.models import Channel, ChannelEntry, FreestyleVideo, ChatMessage, VideoReaction
+from freestyle.models import Channel, ChannelEntry, FreestyleVideo, ChatMessage
 
 
 def _is_hls(url: str) -> bool:
