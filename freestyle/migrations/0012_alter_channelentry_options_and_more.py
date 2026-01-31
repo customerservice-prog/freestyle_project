@@ -6,27 +6,49 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('freestyle', '0011_alter_channelentry_options_alter_chatmessage_options_and_more'),
+        ("freestyle", "0011_alter_channelentry_options_alter_chatmessage_options_and_more"),
     ]
 
     operations = [
+        # ✅ FIX: If the DB column is currently integer/bigint (epoch seconds),
+        # convert it to timestamptz using to_timestamp() BEFORE Django AlterField runs.
+        migrations.RunSQL(
+            """
+            DO $$
+            BEGIN
+              IF EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name='freestyle_vote'
+                  AND column_name='created'
+                  AND data_type IN ('integer','bigint')
+              ) THEN
+                ALTER TABLE freestyle_vote
+                  ALTER COLUMN created TYPE timestamp with time zone
+                  USING to_timestamp(created);
+              END IF;
+            END$$;
+            """,
+            reverse_sql=migrations.RunSQL.noop,
+        ),
+
         migrations.AlterModelOptions(
-            name='channelentry',
-            options={'ordering': ['channel', 'position']},
+            name="channelentry",
+            options={"ordering": ["channel", "position"]},
         ),
         migrations.AlterField(
-            model_name='channelentry',
-            name='position',
+            model_name="channelentry",
+            name="position",
             field=models.PositiveIntegerField(default=1),
         ),
         migrations.AlterField(
-            model_name='freestylevideo',
-            name='duration_seconds',
+            model_name="freestylevideo",
+            name="duration_seconds",
             field=models.PositiveIntegerField(default=0),
         ),
         migrations.AlterField(
-            model_name='vote',
-            name='created',
+            model_name="vote",
+            name="created",
             field=models.DateTimeField(auto_now=True),
         ),
     ]
