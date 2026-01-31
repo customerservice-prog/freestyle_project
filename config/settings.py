@@ -1,4 +1,3 @@
-# config/settings.py
 from pathlib import Path
 import os
 import dj_database_url
@@ -14,7 +13,7 @@ def env(name: str, default: str | None = None) -> str | None:
     Supports either NAME or DJANGO_NAME environment variables.
     Example: SECRET_KEY or DJANGO_SECRET_KEY
     """
-    return os.environ.get(name, os.environ.get(f"DJANGO_{name}", default))
+    return os.environ.get(name) or os.environ.get(f"DJANGO_{name}") or default
 
 
 def env_bool(name: str, default: str = "0") -> bool:
@@ -39,7 +38,7 @@ render_host = (env("RENDER_EXTERNAL_HOSTNAME") or "").strip()
 if render_host and render_host not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append(render_host)
 
-# Allow Render health checks / internal hostnames
+# Allow Render internal hostnames / health checks
 if ".onrender.com" not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append(".onrender.com")
 
@@ -54,8 +53,11 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+
     "freestyle",
-    # only include tvapi if you actually use it now
+
+    # Only include this if you actually use tvapi right now.
+    # If tvapi is removed from urls.py and not used, keep it commented.
     # "tvapi",
 ]
 
@@ -65,7 +67,7 @@ INSTALLED_APPS = [
 # -------------------------
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",  # static on Render
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -97,13 +99,14 @@ TEMPLATES = [
     },
 ]
 
+
 WSGI_APPLICATION = "config.wsgi.application"
 
 
 # -------------------------
 # Database
 # -------------------------
-# Local fallback sqlite.
+# Default local fallback (SQLite)
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
@@ -111,7 +114,7 @@ DATABASES = {
     }
 }
 
-# On Render: set DATABASE_URL and it will use Postgres automatically.
+# Render Postgres (your shell shows DATABASE_URL exists)
 database_url = env("DATABASE_URL")
 if database_url:
     DATABASES["default"] = dj_database_url.parse(
@@ -145,28 +148,34 @@ USE_TZ = True
 # Static files
 # -------------------------
 STATIC_URL = "/static/"
-STATICFILES_DIRS = [BASE_DIR / "static"]          # your repo static/
-STATIC_ROOT = BASE_DIR / "staticfiles"            # collectstatic output
+STATIC_ROOT = BASE_DIR / "staticfiles"
+STATICFILES_DIRS = [BASE_DIR / "static"]
 
-STORAGES = {
-    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
-    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
-}
+# Django 5+ recommended storage setting
+# In DEBUG, don't use Manifest (it can break if collectstatic not run)
+if DEBUG:
+    STORAGES = {
+        "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+    }
+else:
+    STORAGES = {
+        "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+        "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
+    }
 
 
 # -------------------------
-# Media (uploads)
+# Media uploads
 # -------------------------
 MEDIA_URL = "/media/"
-
-# IMPORTANT:
-# - Local: BASE_DIR/media
-# - Render: set MEDIA_ROOT to your Render Disk mount like /var/data/media
+# Local: BASE_DIR/media
+# Render: set MEDIA_ROOT=/var/data/media (Disk mount)
 MEDIA_ROOT = Path(env("MEDIA_ROOT", str(BASE_DIR / "media")))
 
 
 # -------------------------
-# CSRF / Security behind Render proxy
+# CSRF / Proxy SSL
 # -------------------------
 csrf_env = env("CSRF_TRUSTED_ORIGINS")
 if csrf_env:
@@ -187,6 +196,7 @@ if not DEBUG:
     USE_X_FORWARDED_HOST = True
     CSRF_COOKIE_SECURE = True
     SESSION_COOKIE_SECURE = True
-    SECURE_SSL_REDIRECT = False  # Render already terminates SSL
+    SECURE_SSL_REDIRECT = False  # Render terminates SSL already
+
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
