@@ -1,192 +1,210 @@
+from __future__ import annotations
+
 import json
-from django.db.models import Count
+from urllib.parse import urlparse
+
+from django.db import IntegrityError
 from django.http import JsonResponse
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from django.views.decorators.http import require_GET, require_POST
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_http_methods
 
-from freestyle.models import Channel, ChannelEntry, FreestyleVideo, ChatMessage, ChatReaction
-
-
-def _client_id_from_request(request):
-    cid = request.headers.get("X-Client-Id") or request.META.get("HTTP_X_CLIENT_ID") or ""
-    return (cid or "").strip()[:80]
+from freestyle.models import Channel, ChannelEntry, FreestyleVideo, ChatMessage, VideoReaction
 
 
-@require_GET
-def channel_now_json(request, slug):
+def _json_ok(payload: dict, status: int = 200) -> JsonResponse:
+    return JsonResponse({"ok": True, **payload}, status=status)
+
+
+def _json_err(message: str, status: int = 400, **extra) -> JsonResponse:
+    return JsonResponse({"ok": False, "error": message, **extra}, status=status)
+
+
+def _client_id(request) -> str:
+    cid = request.COOKIES.get("freestyle_client_id") or request.headers.get("X-Client-Id")
+    if cid:
+        return str(cid)[:64]
+    ua = (request.META.get("HTTP_USER_AGENT") or "")[:120]
+    ip = request.META.get("REMOTE_ADDR") or "0.0.0.0"
+    return f"{ip}:{ua}"[:64]
+
+
+def _is_absolute_url(u: str) -> bool:
+    try:
+        p = urlparse(u)
+        return bool(p.scheme and p.netloc)
+    except Exception:
+        return False
+
+
+def _resolve_play_url(request, video: FreestyleVideo) -> str:
+    """
+    Returns a URL that the browser can actually load.
+    Priority:
+      1) video.playback_url (if set)
+      2) video.video_file.url (if file attached)
+    Returns "" only if both are missing.
+    """
+    play_url = (getattr(video, "playback_url", "") or "").strip()
+
+    # If playback_url exists but is relative, make absolute
+    if play_url:
+        if play_url.startswith("/"):
+            return request.build_absolute_uri(play_url)
+        if _is_absolute_url(play_url):
+            return play_url
+        # treat as relative path
+        return request.build_absolute_uri("/" + play_url.lstrip("/"))
+
+    # fallback to file field
+    vf = getattr(video, "video_file", None)
+    if vf:
+        try:
+            if vf.name:
+                return request.build_absolute_uri(vf.url)
+        except Exception:
+            return ""
+
+    return ""
+
+
+@require_http_methods(["GET"])
+def channel_now(request, channel_slug: str) -> JsonResponse:
     """
     Returns:
-    {
-      "version": "FREESTYLE-LIVEFINAL-CHAT-1",
-      "item": {"video_id": "...", "play_url":"...", "is_hls": false},
-      "offset_seconds": 123
-    }
+      { ok: true, item: { video_id, title, play_url, is_hls, duration_seconds, offset_seconds } }
     """
-    channel = Channel.objects.filter(slug=slug).first()
-    if not channel:
-        channel = Channel.objects.create(slug=slug, name=slug.title())
+    channel = get_object_or_404(Channel, slug=channel_slug)
 
-    # Ensure channel has a started_at
-    if channel.started_at is None:
-        channel.started_at = timezone.now()
-        channel.save(update_fields=["started_at"])
-
-    entries = list(
+    entry = (
         ChannelEntry.objects.select_related("video")
-        .filter(channel=channel, active=True)
+        .filter(channel=channel, is_active=True, video__isnull=False)
         .order_by("position", "id")
+        .first()
     )
 
-    if not entries:
-        return JsonResponse({"item": None, "offset_seconds": 0, "error": "no_videos"}, status=200)
+    if not entry or not entry.video:
+        return _json_ok({"item": None})
 
-    # total loop duration
-    durations = []
-    for e in entries:
-        d = int(getattr(e.video, "duration_seconds", 30) or 30)
-        durations.append(max(1, d))
-    total = sum(durations) or 1
+    video: FreestyleVideo = entry.video
+    play_url = _resolve_play_url(request, video)
 
-    elapsed = int((timezone.now() - channel.started_at).total_seconds())
-    elapsed = max(0, elapsed)
-    loop_pos = elapsed % total
-
-    # find current entry
-    acc = 0
-    current = entries[0]
-    current_dur = durations[0]
-    offset = 0
-    for e, dur in zip(entries, durations):
-        if loop_pos < acc + dur:
-            current = e
-            current_dur = dur
-            offset = loop_pos - acc
-            break
-        acc += dur
-
-    v = current.video
-    play_url = v.get_play_url()
+    # If this is blank, your admin record is missing BOTH playback_url and video_file
     if not play_url:
-        return JsonResponse({"item": None, "offset_seconds": 0, "error": "missing_play_url"}, status=200)
+        return _json_err(
+            "No playable URL for this video (playback_url empty AND video_file not attached).",
+            status=500,
+            debug={
+                "video_id": video.id,
+                "title": getattr(video, "title", ""),
+                "playback_url": getattr(video, "playback_url", ""),
+                "video_file_name": getattr(getattr(video, "video_file", None), "name", None),
+            },
+        )
 
-    # Keep admin stats (optional)
-    if offset == 0 and not current.has_played_once:
-        current.has_played_once = True
-        current.play_count = (current.play_count or 0) + 1
-        current.save(update_fields=["has_played_once", "play_count"])
+    # mark played once if field exists
+    if hasattr(entry, "has_played_once") and not entry.has_played_once:
+        entry.has_played_once = True
+        entry.save(update_fields=["has_played_once"])
 
-    return JsonResponse({
-        "version": "FREESTYLE-LIVEFINAL-CHAT-1",
-        "item": {
-            "video_id": str(v.id),
-            "play_url": play_url,
-            "is_hls": v.is_hls(),
-        },
-        "offset_seconds": int(offset),
-    })
-
-
-@require_GET
-def video_captions_json(request, video_id):
-    v = FreestyleVideo.objects.filter(id=video_id).first()
-    if not v:
-        return JsonResponse({"words": []})
-    words = v.captions_words or []
-    if not isinstance(words, list):
-        words = []
-    return JsonResponse({"words": words})
+    item = {
+        "video_id": video.id,
+        "title": video.title,
+        "play_url": play_url,
+        "is_hls": play_url.lower().endswith(".m3u8"),
+        "duration_seconds": getattr(video, "duration_seconds", 0) or 0,
+        "offset_seconds": 0,
+    }
+    return _json_ok({"item": item})
 
 
-@require_GET
-def chat_messages_json(request, slug):
-    after_id = request.GET.get("after_id")
+@require_http_methods(["GET"])
+def chat_messages(request, channel_slug: str) -> JsonResponse:
+    channel = get_object_or_404(Channel, slug=channel_slug)
+    after_id = request.GET.get("after_id", "0")
     try:
-        after_id = int(after_id) if after_id else 0
-    except Exception:
-        after_id = 0
+        after_id_int = int(after_id)
+    except ValueError:
+        after_id_int = 0
 
-    qs = ChatMessage.objects.filter(channel=slug, id__gt=after_id).order_by("id")[:200]
-    items = [{
-        "id": m.id,
-        "username": m.username,
-        "message": m.message,
-        "created_at": m.created_at.isoformat(),
-    } for m in qs]
-
-    return JsonResponse({"items": items})
+    qs = ChatMessage.objects.filter(channel=channel, id__gt=after_id_int).order_by("id")[:200]
+    messages = [
+        {"id": m.id, "user": m.username, "message": m.message, "created_at": m.created_at.isoformat()}
+        for m in qs
+    ]
+    return _json_ok({"messages": messages})
 
 
 @csrf_exempt
-@require_POST
-def chat_send(request, slug):
+@require_http_methods(["POST"])
+def chat_send(request, channel_slug: str) -> JsonResponse:
+    channel = get_object_or_404(Channel, slug=channel_slug)
     try:
-        payload = json.loads(request.body.decode("utf-8"))
-    except Exception:
-        payload = request.POST
+        body = json.loads(request.body.decode("utf-8") or "{}")
+    except json.JSONDecodeError:
+        body = {}
 
-    username = (payload.get("username") or "Guest").strip()[:48]
-    message = (payload.get("message") or "").strip()[:280]
-
+    username = (body.get("user") or body.get("username") or "guest")[:32]
+    message = (body.get("message") or "").strip()[:400]
     if not message:
-        return JsonResponse({"ok": False, "error": "empty"}, status=400)
+        return _json_err("Message is empty", status=400)
 
-    m = ChatMessage.objects.create(channel=slug, username=username, message=message)
-    return JsonResponse({
-        "ok": True,
-        "item": {"id": m.id, "username": m.username, "message": m.message, "created_at": m.created_at.isoformat()}
-    })
+    m = ChatMessage.objects.create(channel=channel, username=username, message=message, created_at=timezone.now())
+    return _json_ok({"id": m.id})
 
 
-@require_GET
-def reaction_state_json(request, slug):
-    video_id = (request.GET.get("video_id") or "").strip()
-    if not video_id:
-        return JsonResponse({"ok": False, "error": "missing_video_id"}, status=400)
+@require_http_methods(["GET"])
+def reactions_state(request, channel_slug: str) -> JsonResponse:
+    channel = get_object_or_404(Channel, slug=channel_slug)
+    video_id = request.GET.get("video_id")
+    try:
+        vid = int(video_id)
+    except (TypeError, ValueError):
+        return _json_err("Invalid video_id", status=400)
 
-    counts = (ChatReaction.objects
-              .filter(channel=slug, video_id=video_id)
-              .values("reaction")
-              .annotate(c=Count("id")))
-
-    out = {"fire": 0, "nah": 0}
-    for row in counts:
-        out[row["reaction"]] = row["c"]
-
-    client_id = _client_id_from_request(request)
-    voted = None
-    if client_id:
-        existing = ChatReaction.objects.filter(channel=slug, video_id=video_id, client_id=client_id).first()
-        if existing:
-            voted = existing.reaction
-
-    return JsonResponse({"ok": True, "counts": out, "voted": voted})
+    qs = VideoReaction.objects.filter(channel=channel, video_id=vid)
+    return _json_ok({"video_id": vid, "counts": {"fire": qs.filter(reaction="fire").count(), "nah": qs.filter(reaction="nah").count()}})
 
 
 @csrf_exempt
-@require_POST
-def reaction_vote(request, slug):
+@require_http_methods(["POST"])
+def reactions_vote(request, channel_slug: str) -> JsonResponse:
+    channel = get_object_or_404(Channel, slug=channel_slug)
     try:
-        payload = json.loads(request.body.decode("utf-8"))
-    except Exception:
-        payload = request.POST
+        body = json.loads(request.body.decode("utf-8") or "{}")
+    except json.JSONDecodeError:
+        body = {}
 
-    video_id = (payload.get("video_id") or "").strip()
-    reaction = (payload.get("reaction") or "").strip()
+    video_id = body.get("video_id")
+    reaction = (body.get("reaction") or "").lower().strip()
+
+    try:
+        vid = int(video_id)
+    except (TypeError, ValueError):
+        return _json_err("Invalid video_id", status=400)
 
     if reaction not in ("fire", "nah"):
-        return JsonResponse({"ok": False, "error": "bad_reaction"}, status=400)
-    if not video_id:
-        return JsonResponse({"ok": False, "error": "missing_video_id"}, status=400)
+        return _json_err("reaction must be 'fire' or 'nah'", status=400)
 
-    client_id = (payload.get("client_id") or _client_id_from_request(request)).strip()[:80]
-    if not client_id:
-        return JsonResponse({"ok": False, "error": "missing_client_id"}, status=400)
+    get_object_or_404(FreestyleVideo, id=vid)
+    cid = _client_id(request)
 
-    # Enforce one per video per client
-    obj = ChatReaction.objects.filter(video_id=video_id, client_id=client_id).first()
-    if obj:
-        return JsonResponse({"ok": True, "already_voted": True, "voted": obj.reaction})
+    try:
+        VideoReaction.objects.create(channel=channel, video_id=vid, client_id=cid, reaction=reaction)
+        return _json_ok({"voted": True, "already_voted": False, "video_id": vid, "reaction": reaction})
+    except IntegrityError:
+        return _json_ok({"voted": False, "already_voted": True, "video_id": vid, "reaction": reaction})
 
-    ChatReaction.objects.create(channel=slug, video_id=video_id, client_id=client_id, reaction=reaction)
-    return JsonResponse({"ok": True, "already_voted": False, "voted": reaction})
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_http_methods
+from django.utils import timezone
+from django.shortcuts import get_object_or_404
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def channel_reset(request, channel_slug: str):
+    channel = get_object_or_404(Channel, slug=channel_slug)
+    channel.started_at = timezone.now()
+    channel.save(update_fields=["started_at"])
+    return JsonResponse({"ok": True, "reset": True})

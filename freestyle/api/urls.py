@@ -1,18 +1,18 @@
+# freestyle/api_urls.py
 from django.urls import path
-from . import views
+from . import api_views
 
 urlpatterns = [
-    # Live TV “now”
-    path("freestyle/channel/<slug:slug>/now.json", views.channel_now_json, name="channel_now_json"),
+    path("channel/<slug:channel_slug>/now.json", api_views.channel_now, name="freestyle_channel_now"),
 
-    # Captions
-    path("freestyle/video/<int:video_id>/captions.json", views.video_captions_json, name="video_captions_json"),
+    # NEW: reset clock so offset starts at 0
+    path("channel/<slug:channel_slug>/reset.json", api_views.channel_reset, name="freestyle_channel_reset"),
 
-    # Chat
-    path("freestyle/channel/<slug:slug>/chat/messages.json", views.chat_messages_json, name="chat_messages_json"),
-    path("freestyle/channel/<slug:slug>/chat/send/", views.chat_send, name="chat_send"),
+    path("channel/<slug:channel_slug>/chat/messages.json", api_views.chat_messages, name="freestyle_chat_messages"),
+    path("channel/<slug:channel_slug>/chat/send.json", api_views.chat_send, name="freestyle_chat_send"),
 
-    # Reactions
-    path("freestyle/channel/<slug:slug>/reactions/state.json", views.reaction_state_json, name="reaction_state_json"),
-    path("freestyle/channel/<slug:slug>/reactions/vote/", views.reaction_vote, name="reaction_vote"),
+    path("channel/<slug:channel_slug>/reactions/state.json", api_views.reactions_state, name="freestyle_reactions_state"),
+    path("channel/<slug:channel_slug>/reactions/vote.json", api_views.reactions_vote, name="freestyle_reactions_vote"),
+
+    path("video/<int:video_id>/captions.json", api_views.video_captions, name="freestyle_video_captions"),
 ]

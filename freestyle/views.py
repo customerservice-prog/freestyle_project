@@ -1,15 +1,10 @@
-from django.http import HttpResponse
 from django.shortcuts import render
 
-def tv_page(request):
-    return render(request, "freestyle/tv.html")
+def freestyle_tv(request):
+    return render(request, "freestyle/tv.html", {"channel_slug": "main"})
 
-def submit_page(request):
-    # create template freestyle/submit.html (simple stub ok)
+def freestyle_submit(request):
     return render(request, "freestyle/submit.html")
 
-def manage_page(request):
-    return render(request, "freestyle/manage.html")
-
-def creator_page(request):
+def freestyle_creator(request):
     return render(request, "freestyle/creator.html")

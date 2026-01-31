@@ -1,226 +1,206 @@
-import json
-from urllib.parse import urlparse
+import os
+import time
+import mimetypes
+from wsgiref.util import FileWrapper
 
-from django.http import JsonResponse
-from django.utils import timezone
-from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_GET, require_POST
+from django.conf import settings
+from django.http import JsonResponse, StreamingHttpResponse, HttpResponse, Http404
+from django.db.models import Max
 
-from .models import Channel, ChannelEntry, FreestyleVideo, ChatMessage, VideoReaction
+from .models import Channel, ChannelEntry
 
-
-def _is_hls(url: str) -> bool:
-    try:
-        path = urlparse(url).path.lower()
-    except Exception:
-        path = (url or "").lower()
-    return path.endswith(".m3u8")
+# Very simple in-memory presence map for dev.
+# For production, move to Redis.
+PRESENCE = {}  # (channel_slug, sid) -> last_seen_epoch
 
 
-def _abs(request, maybe_url: str) -> str:
-    if not maybe_url:
-        return ""
-    # already absolute
-    if maybe_url.startswith("http://") or maybe_url.startswith("https://"):
-        return maybe_url
-    return request.build_absolute_uri(maybe_url)
-
-
-def _get_or_create_channel(channel_slug: str) -> Channel:
-    ch, _ = Channel.objects.get_or_create(
-        slug=channel_slug,
-        defaults={"name": channel_slug.capitalize(), "started_at": timezone.now()},
-    )
-    # if started_at missing somehow
-    if not ch.started_at:
-        ch.started_at = timezone.now()
-        ch.save(update_fields=["started_at"])
+def _get_channel(channel_slug: str) -> Channel:
+    ch, _ = Channel.objects.get_or_create(slug=channel_slug, defaults={"name": channel_slug.title()})
+    if not ch.schedule_epoch:
+        ch.schedule_epoch = int(time.time())
+        ch.save(update_fields=["schedule_epoch"])
     return ch
 
 
-def _pick_scheduled_item(channel: Channel):
-    """
-    Build a loop schedule across active entries by duration_seconds.
-    Returns: (entry, offset_seconds)
-    """
-    entries = list(
-        ChannelEntry.objects.filter(channel=channel, is_active=True)
+def _playlist_for_channel(ch: Channel):
+    entries = (
+        ChannelEntry.objects
+        .filter(channel=ch)
         .select_related("video")
-        .order_by("position", "id")
+        .order_by("position")
     )
+    return list(entries)
 
-    # Auto-fill: if channel has no entries but videos exist, add latest video as entry
+
+def _pick_current(entries, schedule_epoch: int, now_epoch: int):
+    """
+    Map global time into playlist using duration_seconds (server side).
+    Client does NOT rely on duration; it just plays the URL + offset.
+    """
     if not entries:
-        v = FreestyleVideo.objects.order_by("-id").first()
-        if v:
-            ChannelEntry.objects.create(channel=channel, video=v, position=0, is_active=True)
-            entries = list(
-                ChannelEntry.objects.filter(channel=channel, is_active=True)
-                .select_related("video")
-                .order_by("position", "id")
-            )
+        return None, schedule_epoch, 0
 
-    if not entries:
-        return None, 0
-
-    # durations: default 60 seconds if missing (prevents divide by zero)
     durations = []
+    total = 0
     for e in entries:
-        d = 60
-        if e.video and e.video.duration_seconds and e.video.duration_seconds > 0:
-            d = int(e.video.duration_seconds)
-        durations.append(d)
+        d = int(e.video.duration_seconds or 0)
+        if d <= 0:
+            d = 1
+        durations.append((e.video, d))
+        total += d
 
-    total = sum(durations) or 60
+    elapsed = max(0, int(now_epoch) - int(schedule_epoch))
+    if total <= 0:
+        v, _d = durations[0]
+        return v, schedule_epoch, 0
 
-    elapsed = int((timezone.now() - channel.started_at).total_seconds())
-    if elapsed < 0:
-        elapsed = 0
-    t = elapsed % total
+    pos = elapsed % total
 
-    acc = 0
-    for e, d in zip(entries, durations):
-        if t < acc + d:
-            return e, (t - acc)
-        acc += d
+    running = 0
+    for v, d in durations:
+        if pos < running + d:
+            offset = pos - running
+            start_epoch = now_epoch - offset
+            return v, int(start_epoch), int(offset)
+        running += d
 
-    return entries[0], 0
-
-
-@require_GET
-def now_json(request, channel_slug: str):
-    try:
-        channel = _get_or_create_channel(channel_slug)
-        entry, offset = _pick_scheduled_item(channel)
-
-        # Always return valid JSON (never 500)
-        if not entry or not entry.video:
-            return JsonResponse(
-                {"ok": True, "item": None, "offset_seconds": 0},
-                status=200,
-            )
-
-        v = entry.video
-        play_url = _abs(request, v.play_url())
-
-        item = {
-            "video_id": v.id,
-            "title": v.title,
-            "play_url": play_url,
-            "is_hls": _is_hls(play_url),
-            "duration_seconds": v.duration_seconds or 0,
-        }
-        return JsonResponse({"ok": True, "item": item, "offset_seconds": int(offset)}, status=200)
-
-    except Exception as e:
-        # final safety net: DO NOT 500 the frontend
-        return JsonResponse({"ok": False, "error": str(e), "item": None, "offset_seconds": 0}, status=200)
+    v, _d = durations[0]
+    return v, schedule_epoch, 0
 
 
-@require_GET
-def captions_json(request, video_id: int):
-    v = FreestyleVideo.objects.filter(id=video_id).first()
-    if not v:
-        return JsonResponse({"ok": False, "words": []}, status=200)
+def _count_viewers(channel_slug: str, now_epoch: int, ttl=45):
+    dead = []
+    for (ch, sid), last_seen in PRESENCE.items():
+        if ch == channel_slug and (now_epoch - last_seen) <= ttl:
+            continue
+        if (now_epoch - last_seen) > ttl:
+            dead.append((ch, sid))
+    for k in dead:
+        PRESENCE.pop(k, None)
 
-    words = v.captions_words or []
-    if not isinstance(words, list):
-        words = []
-    return JsonResponse({"ok": True, "words": words}, status=200)
-
-
-@require_GET
-def chat_messages_json(request, channel_slug: str):
-    channel = _get_or_create_channel(channel_slug)
-    try:
-        after_id = int(request.GET.get("after_id", "0") or "0")
-    except Exception:
-        after_id = 0
-
-    qs = ChatMessage.objects.filter(channel=channel, id__gt=after_id).order_by("id")[:100]
-    items = [
-        {"id": m.id, "username": m.username, "message": m.message, "created_at": m.created_at.isoformat()}
-        for m in qs
-    ]
-    return JsonResponse({"ok": True, "items": items}, status=200)
-
-
-@csrf_exempt
-@require_POST
-def chat_send(request, channel_slug: str):
-    channel = _get_or_create_channel(channel_slug)
-
-    try:
-        payload = json.loads(request.body.decode("utf-8") or "{}")
-    except Exception:
-        payload = {}
-
-    username = (payload.get("username") or "anon")[:80]
-    message = (payload.get("message") or "").strip()
-    if not message:
-        return JsonResponse({"ok": False, "error": "empty message"}, status=200)
-
-    # attach current playing video (optional)
-    entry, _ = _pick_scheduled_item(channel)
-    video = entry.video if entry and entry.video else None
-
-    m = ChatMessage.objects.create(channel=channel, username=username, message=message[:1000], video=video)
-    return JsonResponse({"ok": True, "id": m.id}, status=200)
-
-
-@require_GET
-def reactions_state_json(request, channel_slug: str):
-    channel = _get_or_create_channel(channel_slug)
-    video_id = request.GET.get("video_id")
-    if not video_id:
-        return JsonResponse({"ok": True, "counts": {"fire": 0, "nah": 0}, "voted": False}, status=200)
-
-    v = FreestyleVideo.objects.filter(id=video_id).first()
-    if not v:
-        return JsonResponse({"ok": True, "counts": {"fire": 0, "nah": 0}, "voted": False}, status=200)
-
-    fire = VideoReaction.objects.filter(channel=channel, video=v, reaction="fire").count()
-    nah = VideoReaction.objects.filter(channel=channel, video=v, reaction="nah").count()
-
-    client_id = request.headers.get("X-Client-Id", "")[:64]
-    voted = False
-    if client_id:
-        voted = VideoReaction.objects.filter(channel=channel, video=v, client_id=client_id).exists()
-
-    return JsonResponse({"ok": True, "counts": {"fire": fire, "nah": nah}, "voted": voted}, status=200)
-
-
-@csrf_exempt
-@require_POST
-def reactions_vote(request, channel_slug: str):
-    channel = _get_or_create_channel(channel_slug)
-
-    try:
-        payload = json.loads(request.body.decode("utf-8") or "{}")
-    except Exception:
-        payload = {}
-
-    video_id = payload.get("video_id")
-    reaction = (payload.get("reaction") or "").strip().lower()
-    client_id = (payload.get("client_id") or "").strip()[:64]
-
-    if reaction not in ("fire", "nah"):
-        return JsonResponse({"ok": False, "error": "invalid reaction"}, status=200)
-    if not video_id or not client_id:
-        return JsonResponse({"ok": False, "error": "missing video_id/client_id"}, status=200)
-
-    v = FreestyleVideo.objects.filter(id=video_id).first()
-    if not v:
-        return JsonResponse({"ok": False, "error": "video not found"}, status=200)
-
-    # UniqueConstraint prevents double votes; handle gracefully
-    obj, created = VideoReaction.objects.get_or_create(
-        channel=channel,
-        video=v,
-        client_id=client_id,
-        defaults={"reaction": reaction},
+    return sum(
+        1 for (ch, _sid), last_seen in PRESENCE.items()
+        if ch == channel_slug and (now_epoch - last_seen) <= ttl
     )
-    if not created:
-        return JsonResponse({"ok": True, "already_voted": True}, status=200)
 
-    return JsonResponse({"ok": True, "created": True}, status=200)
+
+def presence_ping_json(request):
+    sid = request.GET.get("sid", "").strip()
+    channel_slug = request.GET.get("channel", "main").strip()
+    now_epoch = int(time.time())
+
+    if sid:
+        PRESENCE[(channel_slug, sid)] = now_epoch
+
+    return JsonResponse({"ok": True, "ts": now_epoch})
+
+
+def now_json(request, channel):
+    channel_slug = channel
+    now_epoch = int(time.time())
+    ch = _get_channel(channel_slug)
+    entries = _playlist_for_channel(ch)
+
+    video, start_epoch, offset_seconds = _pick_current(entries, ch.schedule_epoch, now_epoch)
+
+    if not video:
+        return JsonResponse({
+            "ok": True,
+            "channel": channel_slug,
+            "title": "",
+            "play_url": None,
+            "captions_vtt": None,
+            "duration_seconds": 0,
+            "start_epoch": ch.schedule_epoch,
+            "server_epoch": now_epoch,
+            "offset_seconds": 0,
+            "viewers": _count_viewers(channel_slug, now_epoch),
+        })
+
+    # IMPORTANT: Use /api/freestyle/stream/... instead of /media/... for smooth Range playback
+    # video.file.name is like "freestyle_videos/filename.mp4"
+    relpath = video.file.name.replace("\\", "/")
+    play_url = request.build_absolute_uri(f"/api/freestyle/stream/{relpath}")
+
+    return JsonResponse({
+        "ok": True,
+        "channel": channel_slug,
+        "title": video.title,
+        "play_url": play_url,
+        "captions_vtt": request.build_absolute_uri(video.captions_vtt.url) if getattr(video, "captions_vtt", None) else None,
+        "duration_seconds": int(video.duration_seconds or 0),
+        "start_epoch": int(start_epoch),
+        "server_epoch": int(now_epoch),
+        "offset_seconds": int(offset_seconds),
+        "viewers": _count_viewers(channel_slug, now_epoch),
+    })
+
+
+# -----------------------------
+# STREAMING (Range/206) FOR MP4
+# -----------------------------
+def stream_media(request, relpath: str):
+    """
+    Streams a file from MEDIA_ROOT with HTTP Range support.
+    This is REQUIRED for stable MP4 seeking/buffering in most browsers.
+    URL: /api/freestyle/stream/<path>
+    """
+    relpath = (relpath or "").replace("\\", "/").lstrip("/")
+    abs_path = os.path.abspath(os.path.join(settings.MEDIA_ROOT, relpath))
+
+    media_root = os.path.abspath(settings.MEDIA_ROOT)
+    if not abs_path.startswith(media_root):
+        raise Http404("Invalid path")
+
+    if not os.path.exists(abs_path) or not os.path.isfile(abs_path):
+        raise Http404("File not found")
+
+    file_size = os.path.getsize(abs_path)
+    content_type, _ = mimetypes.guess_type(abs_path)
+    if not content_type:
+        content_type = "application/octet-stream"
+
+    range_header = request.headers.get("Range") or request.META.get("HTTP_RANGE")
+    if not range_header:
+        # no Range -> normal streaming response
+        resp = StreamingHttpResponse(FileWrapper(open(abs_path, "rb")), content_type=content_type)
+        resp["Content-Length"] = str(file_size)
+        resp["Accept-Ranges"] = "bytes"
+        return resp
+
+    # Parse Range: bytes=start-end
+    try:
+        units, rng = range_header.split("=", 1)
+        if units.strip() != "bytes":
+            return HttpResponse(status=416)
+
+        start_str, end_str = rng.split("-", 1)
+        start = int(start_str) if start_str else 0
+        end = int(end_str) if end_str else file_size - 1
+
+        if start >= file_size:
+            return HttpResponse(status=416)
+
+        end = min(end, file_size - 1)
+        length = end - start + 1
+    except Exception:
+        return HttpResponse(status=416)
+
+    f = open(abs_path, "rb")
+    f.seek(start)
+
+    def iterator(fileobj, chunk_size=1024 * 512):
+        remaining = length
+        while remaining > 0:
+            read_size = min(chunk_size, remaining)
+            data = fileobj.read(read_size)
+            if not data:
+                break
+            remaining -= len(data)
+            yield data
+
+    resp = StreamingHttpResponse(iterator(f), status=206, content_type=content_type)
+    resp["Content-Length"] = str(length)
+    resp["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+    resp["Accept-Ranges"] = "bytes"
+    return resp

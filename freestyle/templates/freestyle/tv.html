@@ -1,708 +1,132 @@
 {% load static %}
 <!doctype html>
-<html lang="en">
+<html lang="en" data-channel="{{ channel_slug|default:'main' }}">
 <head>
   <meta charset="utf-8" />
-  <title>Freestyle TV</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <title>Freestyle TV</title>
 
-  <style>
-    html, body { margin:0; padding:0; height:100%; background:#000; overflow:hidden; }
-    #player { width:100vw; height:100vh; background:#000; object-fit:contain; }
-
-    .badge {
-      position:fixed; top:10px; left:10px; z-index:9999;
-      display:flex; gap:8px; flex-wrap:wrap;
-    }
-    .badge a{
-      color:#fff; font-family:Arial,sans-serif; font-size:14px;
-      background:rgba(0,0,0,.45);
-      padding:8px 10px; border-radius:8px; text-decoration:none;
-    }
-
-    #logo{
-      position:fixed; top:14px; right:14px;
-      height:320px; width:auto;
-      z-index:9999; pointer-events:none;
-      opacity:.98;
-      filter: drop-shadow(0 0 20px rgba(0,170,255,.35)) drop-shadow(0 0 60px rgba(0,170,255,.18));
-      animation: glow 3.2s ease-in-out infinite;
-      transform-origin: 50% 50%;
-    }
-    @keyframes glow{
-      0%,100%{ filter: drop-shadow(0 0 14px rgba(0,170,255,.20)) drop-shadow(0 0 42px rgba(0,170,255,.12)); }
-      50%{ filter: drop-shadow(0 0 28px rgba(0,170,255,.65)) drop-shadow(0 0 95px rgba(0,170,255,.26)); }
-    }
-
-    .tv-controls{
-      position:fixed; bottom:14px; left:14px; z-index:9999;
-      display:flex; align-items:center; gap:10px;
-      padding:10px 12px; border-radius:12px;
-      background:rgba(0,0,0,.40); backdrop-filter: blur(6px);
-    }
-    .tv-btn{
-      color:#fff; font-family:Arial,sans-serif; font-size:14px;
-      border:1px solid rgba(255,255,255,.22);
-      background:rgba(255,255,255,.06);
-      padding:8px 10px; border-radius:10px;
-      cursor:pointer; user-select:none;
-    }
-    .tv-vol{ display:flex; align-items:center; gap:8px; color:#fff; font-family:Arial; font-size:13px; }
-    .tv-vol input[type="range"]{ width:150px; cursor:pointer; }
-
-    /* Captions */
-    #captionsWrap{
-      position:fixed; left:0; right:0; bottom:64px;
-      z-index:9500; pointer-events:none;
-      display:flex; justify-content:center;
-      padding:0 14px;
-    }
-    #captions{
-      max-width:min(1080px, 92vw);
-      padding:10px 14px;
-      border-radius:16px;
-      background: rgba(0,0,0,.35);
-      backdrop-filter: blur(8px);
-      border: 1px solid rgba(255,255,255,.10);
-      box-shadow: 0 10px 30px rgba(0,0,0,.35);
-      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
-      font-weight: 800;
-      letter-spacing: .2px;
-      color:#fff;
-      line-height:1.18;
-      text-align:center;
-      text-shadow: 0 2px 10px rgba(0,0,0,.65);
-      font-size: clamp(18px, 2.6vw, 34px);
-      display:none;
-    }
-    .cw{ opacity:.78; }
-    .cw.hot{ opacity:1; display:inline-block; transform:scale(1.08); }
-
-    /* Gate (shows EVERY refresh) */
-    #gate{
-      position:fixed; inset:0; z-index:20000;
-      display:flex; align-items:center; justify-content:center;
-      background:rgba(0,0,0,.72);
-      backdrop-filter: blur(10px);
-    }
-    .gate-card{
-      width:min(640px, 92vw);
-      background: rgba(10,10,10,.92);
-      border:1px solid rgba(255,255,255,.12);
-      border-radius:18px;
-      padding:18px;
-      color:#fff;
-      font-family: Arial, sans-serif;
-      text-align:center;
-      box-shadow: 0 10px 40px rgba(0,0,0,.55);
-    }
-    .gate-card h2{ margin:0 0 8px 0; font-size:22px; }
-    .gate-terms{
-      text-align:left; font-size:13px; opacity:.92; line-height:1.35;
-      max-height:190px; overflow:auto;
-      border:1px solid rgba(255,255,255,.12);
-      border-radius:12px; padding:10px; margin:12px 0;
-      background: rgba(0,0,0,.25);
-    }
-    #enterBtn{
-      padding:10px 14px; border-radius:12px;
-      background: rgba(0,170,255,.18);
-      border:1px solid rgba(0,170,255,.45);
-      color:#fff; font-weight:800;
-      cursor:not-allowed; opacity:.45;
-      width:100%;
-    }
-    #enterBtn.enabled{ cursor:pointer; opacity:1; }
-
-    /* Chatbox + reactions */
-    #chatDock{
-      position:fixed; right:14px; bottom:14px; z-index:9999;
-      width:min(360px, 94vw);
-      border-radius:16px;
-      background: rgba(0,0,0,.40);
-      backdrop-filter: blur(10px);
-      border: 1px solid rgba(0,170,255,.18);
-      box-shadow: 0 14px 50px rgba(0,0,0,.55);
-      overflow:hidden;
-      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
-    }
-    #chatHeader{
-      padding:10px 12px;
-      display:flex; align-items:center; justify-content:space-between;
-      border-bottom:1px solid rgba(255,255,255,.08);
-      background: linear-gradient(90deg, rgba(0,170,255,.10), rgba(0,0,0,0));
-      color:#fff;
-      font-weight:900;
-      letter-spacing:.3px;
-    }
-    #chatMeta{ font-size:12px; opacity:.8; font-weight:700; }
-
-    #reactionBar{
-      padding:10px 12px;
-      border-bottom:1px solid rgba(255,255,255,.08);
-      display:flex; align-items:center; justify-content:space-between;
-      color:#fff;
-      gap:10px;
-    }
-    .rxBtns{ display:flex; gap:10px; align-items:center; }
-    .rxBtn{
-      display:flex; align-items:center; gap:8px;
-      border-radius:12px;
-      padding:8px 10px;
-      border:1px solid rgba(255,255,255,.14);
-      background: rgba(255,255,255,.06);
-      cursor:pointer;
-      user-select:none;
-      font-weight:800;
-      transition: transform .08s ease;
-    }
-    .rxBtn:active{ transform: scale(.98); }
-    .rxBtn[disabled]{ opacity:.45; cursor:not-allowed; }
-    .rxCount{ opacity:.9; font-weight:900; }
-    .rxNote{ font-size:12px; opacity:.75; font-weight:700; }
-
-    #chatList{
-      height:220px;
-      overflow:auto;
-      padding:10px 10px 6px 10px;
-      color:#fff;
-    }
-    .msg{
-      padding:8px 10px;
-      border-radius:12px;
-      margin-bottom:8px;
-      background: rgba(0,0,0,.25);
-      border:1px solid rgba(255,255,255,.06);
-    }
-    .msg .u{ font-weight:900; color: rgba(0,170,255,.95); }
-    .msg .t{ font-weight:700; opacity:.92; margin-left:6px; }
-
-    #chatInputWrap{
-      padding:10px;
-      border-top:1px solid rgba(255,255,255,.08);
-      display:flex; gap:8px;
-    }
-    #chatInput{
-      flex:1;
-      border-radius:12px;
-      border:1px solid rgba(255,255,255,.12);
-      background: rgba(0,0,0,.35);
-      color:#fff;
-      padding:10px 10px;
-      outline:none;
-      font-weight:700;
-    }
-    #sendBtn{
-      border-radius:12px;
-      padding:10px 12px;
-      border:1px solid rgba(0,170,255,.35);
-      background: rgba(0,170,255,.14);
-      color:#fff; font-weight:900;
-      cursor:pointer;
-    }
-
-    /* floating bubble */
-    .bubble{
-      position:fixed;
-      right:40px;
-      bottom:220px;
-      z-index:12000;
-      font-size:30px;
-      filter: drop-shadow(0 10px 30px rgba(0,0,0,.65));
-      animation: floatUp 1.1s ease-out forwards;
-      pointer-events:none;
-    }
-    @keyframes floatUp{
-      0%{ transform: translateY(0) scale(1); opacity:1; }
-      100%{ transform: translateY(-120px) scale(1.25); opacity:0; }
-    }
-  </style>
+  <link rel="icon" href="{% static 'freestyle/logo.png' %}">
+  <link rel="stylesheet" href="{% static 'freestyle/tv.css' %}">
 </head>
 
 <body>
-  <div class="badge">
-    <a href="/freestyle/submit/">Submit</a>
-    <a href="/freestyle/control/freestyle/channel/main/">Manage (staff)</a>
-    <a href="/freestyle/creator/">Creator</a>
-  </div>
+  <div class="tv-root">
 
-  <img id="logo" src="{% static 'freestyle/img/logo.png' %}" alt="Logo" />
+    <nav class="tv-nav">
+      <a class="tv-pill" href="{% url 'freestyle_submit' %}">Submit</a>
+      <a class="tv-pill" href="{% url 'admin:index' %}">Manage (staff)</a>
+      <a class="tv-pill" href="{% url 'freestyle_creator' %}">Creator</a>
+    </nav>
 
-  <video
-    id="player"
-    playsinline
-    preload="auto"
-    muted
-    autoplay
-    controlslist="nodownload noplaybackrate noremoteplayback"
-    disablepictureinpicture
-  ></video>
+    <video
+      id="tvVideo"
+      class="tv-video"
+      autoplay
+      muted
+      playsinline
+      preload="auto"
+    ></video>
 
-  <div id="captionsWrap"><div id="captions"></div></div>
+    <!-- LOGO TOP-RIGHT -->
+    <img
+      id="tvLogo"
+      class="tv-logo"
+      src="{% static 'freestyle/logo.png' %}"
+      alt="Logo"
+      loading="eager"
+      decoding="async"
+    />
 
-  <div class="tv-controls">
-    <button id="muteBtn" class="tv-btn" type="button">Unmute</button>
-    <div class="tv-vol">
-      <span>Vol</span>
-      <input id="volSlider" type="range" min="0" max="1" step="0.01" value="0.8" />
-    </div>
-    <button id="fsBtn" class="tv-btn" type="button">Fullscreen</button>
-  </div>
-
-  <!-- Chat dock -->
-  <div id="chatDock">
-    <div id="chatHeader">
-      <div>LIVE CHAT</div>
-      <div id="chatMeta">Guest-…</div>
+    <div id="topBanner" class="tv-banner is-hidden">
+      <div class="live-badge">LIVE</div>
+      <div id="bannerTitle" class="title"></div>
     </div>
 
-    <div id="reactionBar">
-      <div class="rxBtns">
-        <button id="fireBtn" class="rxBtn" type="button"><span>🔥</span> <span>Fire</span> <span class="rxCount" id="fireCount">0</span></button>
-        <button id="nahBtn"  class="rxBtn" type="button"><span>🚫</span> <span>Nah</span>  <span class="rxCount" id="nahCount">0</span></button>
-      </div>
-      <div class="rxNote" id="rxNote">Vote once per video</div>
+    <div id="viewersPill" class="viewers-pill is-hidden">
+      <div class="eye">👁</div>
+      <div id="viewersCount" class="count">1</div>
+      <div class="label">watching</div>
     </div>
 
-    <div id="chatList"></div>
-
-    <div id="chatInputWrap">
-      <input id="chatInput" placeholder="Say something…" maxlength="280" />
-      <button id="sendBtn" type="button">Send</button>
+    <!-- Volume Bottom-Left -->
+    <div id="volumePill" class="volume-pill">
+      <button id="muteBtn" class="vol-btn" type="button" aria-label="Mute/unmute">🔇</button>
+      <input id="volSlider" class="vol-slider" type="range" min="0" max="100" value="100" />
+      <div id="volPct" class="vol-pct">100%</div>
     </div>
-  </div>
 
-  <!-- Gate must show every refresh -->
-  <div id="gate">
-    <div class="gate-card">
-      <h2>Tap to Enter</h2>
-      <div style="opacity:.92">Confirm you agree to our Terms before entering.</div>
+    <button id="chatOpenBtn" class="chat-open-btn is-hidden" type="button">💬 Live Chat</button>
 
-      <div class="gate-terms">
-        <b>Terms Summary (example)</b><br/>
-        • You confirm you have rights to upload content.<br/>
-        • You grant us a worldwide, royalty-free license to host, stream, promote, and monetize it.<br/>
-        • No illegal or infringing uploads.<br/>
-        • We may remove content at any time.<br/><br/>
-        <i>Link your real Terms/Privacy pages.</i>
+    <section id="chatPanel" class="chat-panel">
+      <header class="chat-header">
+        <div class="title">LIVE CHAT</div>
+        <div class="right">
+          <div>Guest</div>
+          <button id="chatCloseBtn" class="chat-close" type="button" aria-label="Close chat">✕</button>
+        </div>
+      </header>
+
+      <div class="chat-actions">
+        <div class="vote-btn">🔥 <span id="fireCount">0</span></div>
+        <div class="vote-btn">🚫 <span id="nahCount">0</span></div>
+        <div style="margin-left:auto;font-size:12px;opacity:.8;">Vote once per video</div>
       </div>
 
-      <label style="display:flex; gap:10px; align-items:flex-start; text-align:left; font-size:13px;">
-        <input id="agreeBox" type="checkbox" style="margin-top:3px;" />
-        <span>I agree to the Terms, Privacy, and Content Policy.</span>
-      </label>
+      <div class="chat-body" id="chatBody">Guest:</div>
 
-      <button id="enterBtn" type="button" style="margin-top:12px;">Enter (Enable Audio)</button>
-      <div style="font-size:12px; opacity:.7; margin-top:8px;">(Live TV keeps running. This only unlocks audio.)</div>
+      <footer class="chat-footer">
+        <input class="chat-input" placeholder="Say something..." />
+        <button class="chat-send" type="button">Send</button>
+      </footer>
+    </section>
+
+    <div id="adBar" class="ad-bar is-hidden">
+      <div class="ad-left">
+        <div class="ad-badge">AD</div>
+        <div class="ad-text">
+          <div class="ad-title">Your Sponsor Here</div>
+          <div class="ad-sub">Book promos, banners, and placements — contact us.</div>
+        </div>
+      </div>
+      <button id="adClose" class="ad-close" type="button" aria-label="Close ad">✕</button>
     </div>
+
+    <!-- ENTER OVERLAY (FULL TERMS SUMMARY) -->
+    <div id="enterOverlay" class="enter-overlay is-hidden">
+      <div class="enter-card">
+        <h2>Tap to Enter</h2>
+        <p>Confirm you agree to our Terms before entering.</p>
+
+        <div class="enter-terms">
+          <strong>Terms Summary (example)</strong>
+          <ul>
+            <li>You confirm you have rights to upload content.</li>
+            <li>You grant us a worldwide, royalty-free license to host, stream, promote, and monetize it.</li>
+            <li>No illegal or infringing uploads.</li>
+            <li>We may remove content at any time.</li>
+          </ul>
+
+          <a class="enter-link" href="/terms" target="_blank" rel="noopener">Terms</a>
+          <span class="enter-dot">•</span>
+          <a class="enter-link" href="/privacy" target="_blank" rel="noopener">Privacy</a>
+        </div>
+
+        <label class="enter-row">
+          <input id="enterAgree" type="checkbox" />
+          <span>I agree to the Terms, Privacy, and Content Policy.</span>
+        </label>
+
+        <button id="enterBtn" class="enter-btn is-disabled" type="button" disabled>
+          Enter (Enable Audio)
+        </button>
+
+        <div class="enter-note">(Live TV keeps running. This only unlocks audio.)</div>
+      </div>
+    </div>
+
   </div>
 
-  <script>
-    const videoEl   = document.getElementById("player");
-    const captionsEl= document.getElementById("captions");
-
-    const gateEl    = document.getElementById("gate");
-    const agreeBox  = document.getElementById("agreeBox");
-    const enterBtn  = document.getElementById("enterBtn");
-
-    const muteBtn   = document.getElementById("muteBtn");
-    const volSlider = document.getElementById("volSlider");
-    const fsBtn     = document.getElementById("fsBtn");
-
-    // chat elements
-    const chatMeta  = document.getElementById("chatMeta");
-    const chatList  = document.getElementById("chatList");
-    const chatInput = document.getElementById("chatInput");
-    const sendBtn   = document.getElementById("sendBtn");
-
-    // reactions
-    const fireBtn   = document.getElementById("fireBtn");
-    const nahBtn    = document.getElementById("nahBtn");
-    const fireCount = document.getElementById("fireCount");
-    const nahCount  = document.getElementById("nahCount");
-    const rxNote    = document.getElementById("rxNote");
-
-    const channelSlug = "main";
-
-    // ✅ NOTE: these are RELATIVE so they work on local + live
-    const nowUrl = `/api/freestyle/channel/${channelSlug}/now.json`;
-    const captionsUrlFor = (videoId) => `/api/freestyle/video/${videoId}/captions.json`;
-    const chatPollUrl = (afterId) => `/api/freestyle/channel/${channelSlug}/chat/messages.json?after_id=${afterId||0}`;
-    const chatSendUrl = `/api/freestyle/channel/${channelSlug}/chat/send/`;
-    const reactionStateUrl = (videoId) => `/api/freestyle/channel/${channelSlug}/reactions/state.json?video_id=${encodeURIComponent(videoId)}`;
-    const reactionVoteUrl = `/api/freestyle/channel/${channelSlug}/reactions/vote/`;
-
-    const POLL_MS = 6000;
-    const CHAT_POLL_MS = 1500;
-    const DRIFT_FIX_SEC = 4;
-    const BIG_DRIFT_SEC = 10;
-
-    let hls = null;
-    let currentVideoId = null;
-    let currentSrc = null;
-    let switching = false;
-
-    // captions state
-    let capWords = [];
-    let capIndex = 0;
-    let capLastVideoId = null;
-
-    // chat state
-    let lastChatId = 0;
-
-    // device identity for vote limiting
-    function getClientId(){
-      let cid = localStorage.getItem("fs_client_id");
-      if (!cid){
-        cid = "cid_" + Math.random().toString(16).slice(2) + Date.now().toString(16);
-        localStorage.setItem("fs_client_id", cid);
-      }
-      return cid;
-    }
-    const CLIENT_ID = getClientId();
-
-    // guest name
-    function getGuestName(){
-      let g = localStorage.getItem("fs_guest_name");
-      if (!g){
-        g = "Guest-" + Math.floor(1000 + Math.random()*9000);
-        localStorage.setItem("fs_guest_name", g);
-      }
-      return g;
-    }
-    const GUEST = getGuestName();
-    chatMeta.textContent = GUEST;
-
-    function destroyHls(){ if (hls) { hls.destroy(); hls = null; } }
-
-    function attachSource(url, isHls){
-      destroyHls();
-      if (isHls) {
-        if (videoEl.canPlayType("application/vnd.apple.mpegurl")) {
-          videoEl.src = url;
-        } else if (window.Hls) {
-          hls = new Hls({ enableWorker:true });
-          hls.loadSource(url);
-          hls.attachMedia(videoEl);
-        } else {
-          throw new Error("HLS not supported.");
-        }
-      } else {
-        videoEl.src = url;
-      }
-    }
-
-    function safeSeek(t){
-      t = Math.max(0, Math.floor(t || 0));
-      try { videoEl.currentTime = t; } catch(e) {}
-    }
-
-    // Controls init
-    videoEl.muted = true;
-    videoEl.volume = parseFloat(volSlider.value);
-    videoEl.controls = false;
-
-    function updateMuteBtn(){ muteBtn.textContent = videoEl.muted ? "Unmute" : "Mute"; }
-    updateMuteBtn();
-
-    muteBtn.addEventListener("click", async () => {
-      videoEl.muted = !videoEl.muted;
-      updateMuteBtn();
-      try { await videoEl.play(); } catch(e) {}
-    });
-
-    volSlider.addEventListener("input", () => {
-      videoEl.volume = parseFloat(volSlider.value);
-      if (videoEl.volume > 0) videoEl.muted = false;
-      updateMuteBtn();
-    });
-
-    fsBtn.addEventListener("click", async () => {
-      try {
-        if (document.fullscreenElement) await document.exitFullscreen();
-        else await videoEl.requestFullscreen();
-      } catch(e) {}
-    });
-
-    // Gate enable/disable (shows every refresh)
-    enterBtn.disabled = true;
-    agreeBox.addEventListener("change", () => {
-      if (agreeBox.checked){
-        enterBtn.classList.add("enabled");
-        enterBtn.disabled = false;
-      } else {
-        enterBtn.classList.remove("enabled");
-        enterBtn.disabled = true;
-      }
-    });
-
-    enterBtn.addEventListener("click", async () => {
-      gateEl.style.display = "none";
-      videoEl.muted = false;
-      updateMuteBtn();
-      try { await videoEl.play(); } catch(e) {}
-    });
-
-    async function fetchNow(){
-      const res = await fetch(nowUrl, { cache:"no-store" });
-      if (!res.ok) throw new Error(`now.json HTTP ${res.status}`);
-      return await res.json();
-    }
-
-    async function loadCaptions(videoId){
-      if (!videoId || capLastVideoId === videoId) return;
-      capLastVideoId = videoId;
-      capWords = []; capIndex = 0;
-      captionsEl.style.display = "none";
-      captionsEl.textContent = "";
-
-      try{
-        const res = await fetch(captionsUrlFor(videoId), { cache:"no-store" });
-        if (!res.ok) throw new Error("no captions");
-        const data = await res.json();
-        capWords = Array.isArray(data.words) ? data.words : [];
-        capIndex = 0;
-        if (capWords.length) captionsEl.style.display = "block";
-      }catch(e){
-        capWords = []; capIndex = 0;
-        captionsEl.style.display = "none";
-      }
-    }
-
-    function escapeHtml(s){
-      return (s || "")
-        .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
-        .replaceAll('"',"&quot;").replaceAll("'","&#039;");
-    }
-
-    function findIndexForTime(t){
-      let lo = 0, hi = capWords.length - 1, ans = 0;
-      while (lo <= hi){
-        const mid = (lo + hi) >> 1;
-        const s = capWords[mid].s || 0;
-        if (s <= t){ ans = mid; lo = mid + 1; }
-        else hi = mid - 1;
-      }
-      return ans;
-    }
-
-    function renderCaptions(){
-      if (!capWords.length) return;
-      const t = videoEl.currentTime || 0;
-
-      if (capIndex >= capWords.length || (capWords[capIndex] && (capWords[capIndex].s || 0) > t + 0.4)){
-        capIndex = findIndexForTime(t);
-      }
-      while (capIndex < capWords.length && (capWords[capIndex].e || 0) < t) capIndex++;
-      if (capIndex >= capWords.length) return;
-
-      const start = Math.max(0, capIndex - 3);
-      const end   = Math.min(capWords.length, capIndex + 6);
-
-      const parts = [];
-      for (let i=start; i<end; i++){
-        const w = (capWords[i].w || "").trim();
-        if (!w) continue;
-        const isHot = (i === capIndex) && (t >= (capWords[i].s||0) - 0.02) && (t <= (capWords[i].e||0) + 0.02);
-        parts.push(`<span class="cw ${isHot ? "hot":""}">${escapeHtml(w)}</span>`);
-      }
-      captionsEl.innerHTML = parts.join(" ");
-      captionsEl.style.display = parts.length ? "block" : "none";
-    }
-    (function rafLoop(){ renderCaptions(); requestAnimationFrame(rafLoop); })();
-
-    async function applyServer(data){
-      const item = data.item;
-      const offset = data.offset_seconds;
-
-      if (!item || !item.video_id || !item.play_url || typeof offset !== "number"){
-        // keep screen quiet — no debug box
-        return;
-      }
-
-      const nextId = String(item.video_id);
-      const nextSrc = String(item.play_url);
-      const nextIsHls = !!item.is_hls;
-
-      // Update reactions whenever video changes
-      if (nextId !== currentVideoId){
-        currentVideoId = nextId;
-        await refreshReactions();
-      }
-
-      if (nextId !== currentVideoId || nextSrc !== currentSrc){
-        if (switching) return;
-        switching = true;
-
-        currentVideoId = nextId;
-        currentSrc = nextSrc;
-
-        await loadCaptions(nextId);
-
-        videoEl.style.visibility = "hidden";
-        attachSource(nextSrc, nextIsHls);
-
-        const onMeta = async () => {
-          videoEl.removeEventListener("loadedmetadata", onMeta);
-          safeSeek(offset);
-          videoEl.style.visibility = "visible";
-          try { await videoEl.play(); } catch(e) {}
-          switching = false;
-        };
-
-        videoEl.addEventListener("loadedmetadata", onMeta);
-        try { await videoEl.play(); } catch(e) {}
-        return;
-      }
-
-      // Same video: drift correction only
-      const ct = (videoEl.currentTime || 0);
-      const drift = Math.abs(ct - offset);
-
-      if (!videoEl.seeking && drift > BIG_DRIFT_SEC){
-        safeSeek(offset);
-      } else if (!videoEl.seeking && drift > DRIFT_FIX_SEC){
-        safeSeek(offset);
-      }
-    }
-
-    async function syncNow(){
-      const data = await fetchNow();
-      await applyServer(data);
-    }
-
-    // keep playing if paused (unless user paused intentionally is fine)
-    videoEl.addEventListener("pause", () => {
-      setTimeout(() => videoEl.play().catch(()=>{}), 150);
-    });
-
-    // returning to tab: resync (small jump allowed)
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") {
-        syncNow().catch(()=>{});
-        videoEl.play().catch(()=>{});
-      }
-    });
-
-    // BOOT: start TV immediately (muted), gate only unlocks audio
-    syncNow().catch(() => {
-      alert("Failed to load Live TV endpoint: " + nowUrl);
-    });
-    setInterval(() => syncNow().catch(()=>{}), POLL_MS);
-
-    // -----------------
-    // CHAT
-    // -----------------
-    function appendMsg(m){
-      const div = document.createElement("div");
-      div.className = "msg";
-      div.innerHTML = `<span class="u">${escapeHtml(m.username)}</span><span class="t">${escapeHtml(m.message)}</span>`;
-      chatList.appendChild(div);
-      chatList.scrollTop = chatList.scrollHeight;
-    }
-
-    async function pollChat(){
-      try{
-        const res = await fetch(chatPollUrl(lastChatId), { cache:"no-store" });
-        if (!res.ok) return;
-        const data = await res.json();
-        const items = Array.isArray(data.items) ? data.items : [];
-        for (const m of items){
-          lastChatId = Math.max(lastChatId, m.id || 0);
-          appendMsg(m);
-        }
-      }catch(e){}
-    }
-    setInterval(pollChat, CHAT_POLL_MS);
-    pollChat();
-
-    async function sendChat(){
-      const msg = (chatInput.value || "").trim();
-      if (!msg) return;
-      chatInput.value = "";
-
-      try{
-        await fetch(chatSendUrl, {
-          method:"POST",
-          headers: { "Content-Type":"application/json" },
-          body: JSON.stringify({ username: GUEST, message: msg })
-        });
-      }catch(e){}
-    }
-    sendBtn.addEventListener("click", sendChat);
-    chatInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") sendChat();
-    });
-
-    // -----------------
-    // REACTIONS
-    // -----------------
-    function votedKey(videoId){ return `fs_voted_${videoId}`; }
-
-    function bubble(emoji){
-      const b = document.createElement("div");
-      b.className = "bubble";
-      b.textContent = emoji;
-      document.body.appendChild(b);
-      setTimeout(() => b.remove(), 1200);
-    }
-
-    async function refreshReactions(){
-      if (!currentVideoId) return;
-      try{
-        const res = await fetch(reactionStateUrl(currentVideoId), {
-          cache:"no-store",
-          headers: { "X-Client-Id": CLIENT_ID }
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!data.ok) return;
-
-        fireCount.textContent = data.counts?.fire ?? 0;
-        nahCount.textContent  = data.counts?.nah  ?? 0;
-
-        const votedLocal = localStorage.getItem(votedKey(currentVideoId));
-        const voted = data.voted || votedLocal;
-
-        if (voted){
-          fireBtn.disabled = true;
-          nahBtn.disabled = true;
-          rxNote.textContent = "voted";
-        } else {
-          fireBtn.disabled = false;
-          nahBtn.disabled = false;
-          rxNote.textContent = "Vote once per video";
-        }
-      }catch(e){}
-    }
-
-    async function vote(reaction){
-      if (!currentVideoId) return;
-
-      const already = localStorage.getItem(votedKey(currentVideoId));
-      if (already) return;
-
-      try{
-        const res = await fetch(reactionVoteUrl, {
-          method:"POST",
-          headers: { "Content-Type":"application/json" },
-          body: JSON.stringify({ video_id: currentVideoId, reaction, client_id: CLIENT_ID })
-        });
-        const data = await res.json();
-        if (!data.ok && !data.already_voted) return;
-
-        localStorage.setItem(votedKey(currentVideoId), reaction);
-
-        bubble(reaction === "fire" ? "🔥" : "🚫");
-        await refreshReactions();
-      }catch(e){}
-    }
-
-    fireBtn.addEventListener("click", () => vote("fire"));
-    nahBtn.addEventListener("click", () => vote("nah"));
-
-    setInterval(refreshReactions, 2500);
-  </script>
+  <script src="{% static 'freestyle/tv.js' %}"></script>
 </body>
 </html>

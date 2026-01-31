@@ -1,81 +1,62 @@
 from django.db import models
-from django.utils import timezone
 
 class Channel(models.Model):
     slug = models.SlugField(unique=True)
-    name = models.CharField(max_length=120)
-    started_at = models.DateTimeField(default=timezone.now)
+    name = models.CharField(max_length=120, default="Main")
+    schedule_epoch = models.IntegerField(default=0)
+
+    def save(self, *args, **kwargs):
+        if not self.schedule_epoch:
+            import time
+            self.schedule_epoch = int(time.time())
+        super().save(*args, **kwargs)
 
     def __str__(self):
-        return self.name
+        return self.slug
 
 
 class FreestyleVideo(models.Model):
     title = models.CharField(max_length=255)
-
-    # Upload file (local/media) OR use playback_url (S3/R2/YouTube direct/HLS, etc.)
-    video_file = models.FileField(upload_to="freestyle/videos/", blank=True, null=True)
-    playback_url = models.URLField(blank=True, default="")
-
-    duration_seconds = models.PositiveIntegerField(blank=True, null=True)
-
-    # Optional captions words: [{"w":"hello","s":1.2,"e":1.6}, ...]
-    captions_words = models.JSONField(blank=True, null=True, default=list)
-
-    created_at = models.DateTimeField(auto_now_add=True)
+    file = models.FileField(upload_to="freestyle_videos/")
+    duration_seconds = models.IntegerField(default=0)
+    captions_vtt = models.FileField(upload_to="freestyle_captions/", null=True, blank=True)
 
     def __str__(self):
         return self.title
 
-    def play_url(self):
-        # playback_url overrides uploaded file URL
-        if self.playback_url:
-            return self.playback_url
-        if self.video_file:
-            return self.video_file.url
-        return ""
-
 
 class ChannelEntry(models.Model):
-    channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name="entries")
-    video = models.ForeignKey(FreestyleVideo, on_delete=models.SET_NULL, null=True, blank=True)
-
-    position = models.PositiveIntegerField(default=0)
-    is_active = models.BooleanField(default=True)
+    channel = models.ForeignKey(Channel, on_delete=models.CASCADE)
+    position = models.IntegerField(default=1)
+    video = models.ForeignKey(FreestyleVideo, on_delete=models.CASCADE)
 
     class Meta:
-        ordering = ["position", "id"]
+        unique_together = ("channel", "position")
 
     def __str__(self):
-        return f"{self.channel.slug} #{self.position}"
+        return f"{self.channel.slug} #{self.position} - {self.video.title}"
 
 
 class ChatMessage(models.Model):
-    channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name="chat_messages")
-    username = models.CharField(max_length=80, default="anon")
-    message = models.TextField()
-    created_at = models.DateTimeField(auto_now_add=True)
-    video = models.ForeignKey(FreestyleVideo, on_delete=models.SET_NULL, null=True, blank=True)
-
-    class Meta:
-        ordering = ["id"]
+    channel = models.ForeignKey(Channel, on_delete=models.CASCADE)
+    name = models.CharField(max_length=32, default="Guest")
+    text = models.CharField(max_length=240)
+    created = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"{self.username}: {self.message[:30]}"
+        return f"{self.channel.slug}: {self.name}"
 
 
-class VideoReaction(models.Model):
-    channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name="video_reactions")
-    video = models.ForeignKey(FreestyleVideo, on_delete=models.CASCADE, related_name="reactions")
-    client_id = models.CharField(max_length=64, db_index=True)
-    reaction = models.CharField(max_length=32, db_index=True)  # "fire" or "nah"
-    created_at = models.DateTimeField(auto_now_add=True)
+class Vote(models.Model):
+    channel = models.ForeignKey(Channel, on_delete=models.CASCADE)
+    video = models.ForeignKey(FreestyleVideo, on_delete=models.CASCADE)
+    session_key = models.CharField(max_length=64)
+    kind = models.CharField(max_length=8)  # fire/nah
+    video_start_epoch = models.IntegerField(default=0)
+    created = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ["-id"]
-        constraints = [
-            models.UniqueConstraint(fields=["channel", "video", "client_id"], name="uniq_vote_per_client_per_video")
-        ]
+        unique_together = ("channel", "video", "session_key", "video_start_epoch")
 
     def __str__(self):
-        return f"{self.reaction} on {self.video_id} by {self.client_id}"
+        return f"{self.channel.slug} {self.kind} {self.session_key}"

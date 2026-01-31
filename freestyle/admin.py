@@ -1,31 +1,30 @@
 from django.contrib import admin
-from .models import Channel, FreestyleVideo, ChannelEntry, ChatMessage, VideoReaction
-
-@admin.register(Channel)
-class ChannelAdmin(admin.ModelAdmin):
-    list_display = ("id", "slug", "name", "started_at")
-    search_fields = ("slug", "name")
+from .models import Channel, ChannelEntry, FreestyleVideo, ChatMessage, Vote
 
 @admin.register(FreestyleVideo)
 class FreestyleVideoAdmin(admin.ModelAdmin):
-    list_display = ("id", "title", "duration_seconds", "created_at")
+    list_display = ("id", "title", "duration_seconds", "file", "captions_vtt")
     search_fields = ("title",)
-    readonly_fields = ("created_at",)
+
+@admin.register(Channel)
+class ChannelAdmin(admin.ModelAdmin):
+    list_display = ("id", "slug", "name", "schedule_epoch")
+    search_fields = ("slug", "name")
 
 @admin.register(ChannelEntry)
 class ChannelEntryAdmin(admin.ModelAdmin):
-    list_display = ("id", "channel", "position", "video", "is_active")
-    list_filter = ("channel", "is_active")
-    ordering = ("channel", "position", "id")
+    list_display = ("id", "channel", "position", "video")
+    list_filter = ("channel",)
+    ordering = ("channel", "position")
 
 @admin.register(ChatMessage)
 class ChatMessageAdmin(admin.ModelAdmin):
-    list_display = ("id", "channel", "username", "created_at", "video")
-    search_fields = ("username", "message")
+    list_display = ("id", "channel", "name", "text", "created")
     list_filter = ("channel",)
+    ordering = ("-created",)
 
-@admin.register(VideoReaction)
-class VideoReactionAdmin(admin.ModelAdmin):
-    list_display = ("id", "channel", "video", "reaction", "client_id", "created_at")
-    list_filter = ("channel", "reaction")
-    search_fields = ("client_id",)
+@admin.register(Vote)
+class VoteAdmin(admin.ModelAdmin):
+    list_display = ("id", "channel", "video", "kind", "session_key", "video_start_epoch", "created")
+    list_filter = ("channel", "kind")
+    ordering = ("-created",)

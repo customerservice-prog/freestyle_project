@@ -1,0 +1,81 @@
+html, body {
+  height: 100%;
+  margin: 0;
+  background: #000;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+}
+
+#stage {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  overflow: hidden;
+}
+
+#player {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+/* “Tap to Start” overlay */
+#gate {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(0,0,0,.65);
+}
+
+.hidden { display: none !important; }
+
+.gate-card {
+  width: min(520px, 92vw);
+  padding: 18px 16px;
+  border-radius: 14px;
+  background: rgba(15,15,15,.92);
+  border: 1px solid rgba(255,255,255,.12);
+  color: #fff;
+  text-align: center;
+}
+
+.gate-title {
+  font-size: 20px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.gate-sub {
+  font-size: 13px;
+  opacity: .9;
+  margin-bottom: 12px;
+}
+
+#g ateBtn, #gateBtn {
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 0;
+  background: #1f6feb;
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* On-screen debug */
+.debug {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  max-width: calc(100% - 16px);
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #fff;
+  background: rgba(0,0,0,.55);
+  border: 1px solid rgba(255,255,255,.10);
+  white-space: pre-wrap;
+  pointer-events: none;
+}

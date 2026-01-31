@@ -1,15 +1,15 @@
 from django.urls import path
-from . import views
+from freestyle.api import views as fv
 
 urlpatterns = [
-    path("freestyle/channel/<slug:channel>/now.json", views.api_now, name="api_now"),
-    path("freestyle/video/<int:video_id>/captions.json", views.api_captions, name="api_captions"),
+    # "Live TV" endpoint (what the player uses)
+    path("freestyle/channel/<slug:channel_slug>/now.json", fv.channel_now, name="freestyle_now"),
 
-    # chat
-    path("chat/<slug:channel>/latest.json", views.api_chat_latest, name="api_chat_latest"),
-    path("chat/<slug:channel>/post.json", views.api_chat_post, name="api_chat_post"),
+    # Chat
+    path("freestyle/channel/<slug:channel_slug>/chat/messages.json", fv.chat_messages, name="freestyle_chat_messages"),
+    path("freestyle/channel/<slug:channel_slug>/chat/send.json", fv.chat_send, name="freestyle_chat_send"),
 
-    # reactions
-    path("reactions/<slug:channel>/<slug:video_id>/counts.json", views.api_reaction_counts, name="api_reaction_counts"),
-    path("reactions/<slug:channel>/<slug:video_id>/vote.json", views.api_reaction_vote, name="api_reaction_vote"),
+    # Reactions
+    path("freestyle/channel/<slug:channel_slug>/reactions/state.json", fv.reactions_state, name="freestyle_reactions_state"),
+    path("freestyle/channel/<slug:channel_slug>/reactions/vote.json", fv.reactions_vote, name="freestyle_reactions_vote"),
 ]
