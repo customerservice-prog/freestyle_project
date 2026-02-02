@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Staff Login</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body{margin:0;height:100vh;display:grid;place-items:center;background:#000;color:#fff;font-family:system-ui}
+    .card{width:min(520px,92vw);border:1px solid rgba(255,255,255,.14);border-radius:18px;background:rgba(12,18,28,.72);backdrop-filter:blur(16px);padding:18px}
+    h1{margin:0 0 12px 0;font-size:22px}
+    label{display:block;margin:10px 0 6px;opacity:.85}
+    input{width:100%;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(0,0,0,.35);color:#fff}
+    button{margin-top:14px;width:100%;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(37,99,235,.65);color:#fff;font-weight:800;cursor:pointer}
+    .small{margin-top:10px;opacity:.7;font-size:12px}
+  </style>
+</head>
+<body>
+  <form class="card" method="post">
+    {% csrf_token %}
+    <h1>Manage (Staff) Login</h1>
+    {{ form.non_field_errors }}
+    <label>Username</label>
+    {{ form.username }}
+    <label>Password</label>
+    {{ form.password }}
+    <button type="submit">Login</button>
+    <div class="small">After login you’ll be sent to the admin panel.</div>
+    <input type="hidden" name="next" value="{{ next|default:'/admin/' }}">
+  </form>
+</body>
+</html>

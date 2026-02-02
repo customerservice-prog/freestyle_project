@@ -1,6 +1,6 @@
 {% load static %}
 <!doctype html>
-<html lang="en">
+<html lang="en" data-channel="main">
 <head>
   <meta charset="utf-8" />
   <title>Freestyle TV</title>
@@ -14,6 +14,7 @@
     .badge { position:fixed; top:10px; left:10px; z-index:9999; display:flex; gap:8px; flex-wrap:wrap; }
     .badge a{ color:#fff; font-family:Arial,sans-serif; font-size:14px; background:rgba(0,0,0,.45); padding:8px 10px; border-radius:8px; text-decoration:none; }
 
+    /* Logo */
     #logo{
       position:fixed; top:14px; right:14px; height:320px; width:auto;
       z-index:9999; pointer-events:none; opacity:.98;
@@ -26,11 +27,151 @@
       50%{ filter: drop-shadow(0 0 28px rgba(0,170,255,.65)) drop-shadow(0 0 95px rgba(0,170,255,.26)); }
     }
 
+    /* Fancy Now Playing Banner */
+    #nowBanner{
+      position:fixed; top:14px; left:50%; transform:translateX(-50%);
+      z-index:9998;
+      width:min(980px, calc(100% - 520px));
+      padding:12px 14px;
+      border-radius:18px;
+      border:1px solid rgba(255,255,255,.14);
+      background: linear-gradient(135deg, rgba(60,130,255,.22), rgba(255,70,160,.12), rgba(0,0,0,.55));
+      backdrop-filter: blur(14px);
+      box-shadow: 0 18px 70px rgba(0,0,0,.55);
+      display:none;
+      color:#fff;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+    }
+    .nb-row{ display:flex; align-items:center; gap:12px; }
+    .nb-live{
+      display:inline-flex; align-items:center; gap:8px;
+      padding:8px 12px;
+      border-radius:999px;
+      font-weight:900;
+      letter-spacing:.12em;
+      font-size:12px;
+      background: rgba(220,38,38,.16);
+      border: 1px solid rgba(220,38,38,.45);
+      white-space:nowrap;
+    }
+    .nb-mid{ flex:1; min-width:0; }
+    .nb-label{ font-size:11px; letter-spacing:.18em; opacity:.85; font-weight:900; }
+    .nb-title{
+      margin-top:2px;
+      font-size:15px;
+      font-weight:950;
+      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    }
+    .nb-meta{ margin-top:4px; display:flex; gap:10px; align-items:center; opacity:.85; font-size:12px; font-weight:800; }
+    .nb-bar{ height:6px; margin-top:8px; background:rgba(255,255,255,.10); border-radius:999px; overflow:hidden; }
+    .nb-fill{ height:100%; width:0%; background: rgba(0,170,255,.75); }
+
+    .nb-rx{ display:flex; gap:10px; align-items:center; }
+    .rxBtnMini{
+      display:flex; align-items:center; gap:8px;
+      border-radius:999px;
+      padding:8px 12px;
+      border:1px solid rgba(255,255,255,.16);
+      background: rgba(0,0,0,.25);
+      color:#fff;
+      font-weight:900;
+      cursor:pointer;
+      user-select:none;
+    }
+    .rxBtnMini:active{ transform:scale(.98); }
+
+    /* Viewers pill */
+    #viewersPill{
+      position:fixed;
+      right:14px;
+      bottom: 412px; /* when chat is open */
+      z-index:10001;
+      display:none;
+      align-items:center;
+      gap:10px;
+      padding:10px 12px;
+      border-radius:999px;
+      background: rgba(0,0,0,.50);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255,255,255,.14);
+      box-shadow: 0 12px 40px rgba(0,0,0,.55);
+      color:#fff;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      font-weight:900;
+    }
+    #viewersPill.chatClosed{
+      bottom:14px; /* ✅ bottom right when chat closed */
+    }
+    #viewersPill .muted{ opacity:.85; font-weight:800; }
+
+    /* Paid Ad card */
+    #adCard{
+      position:fixed;
+      right:14px;
+      top: 360px;
+      z-index:9999;
+      width:360px;
+      border-radius:18px;
+      border:1px solid rgba(255,255,255,.14);
+      background: linear-gradient(180deg, rgba(255,210,80,.20), rgba(60,130,255,.12), rgba(0,0,0,.55));
+      backdrop-filter: blur(14px);
+      box-shadow: 0 22px 90px rgba(0,0,0,.65);
+      overflow:hidden;
+      display:none;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+    }
+    #adClose{
+      position:absolute; top:10px; right:10px;
+      width:30px; height:30px;
+      border-radius:10px;
+      border:1px solid rgba(255,255,255,.16);
+      background: rgba(0,0,0,.35);
+      color:#fff;
+      cursor:pointer;
+      z-index:2;
+    }
+    #adLink{ display:block; text-decoration:none; color:#fff; }
+    .adHead{ padding:14px 14px 8px 14px; }
+    .adPaid{
+      display:inline-block;
+      padding:6px 10px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(0,0,0,.25);
+      letter-spacing:.14em;
+      font-weight:950;
+      font-size:11px;
+    }
+    #adTitle{ margin-top:10px; font-size:16px; font-weight:950; }
+    #adSub{ margin-top:4px; font-size:12px; opacity:.85; font-weight:800; }
+    .adBody{ padding:10px 14px 14px 14px; display:flex; gap:12px; }
+    #adImg{
+      width:108px; height:108px;
+      object-fit:cover;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.12);
+      background: rgba(0,0,0,.25);
+      display:none;
+    }
+    #adDesc{
+      flex:1;
+      font-size:12px;
+      opacity:.92;
+      line-height:1.35;
+      font-weight:700;
+      overflow:hidden;
+      display:-webkit-box;
+      -webkit-line-clamp: 6;
+      -webkit-box-orient: vertical;
+    }
+
+    /* Bottom controls */
     .tv-controls{
       position:fixed; bottom:14px; left:14px; z-index:9999;
       display:flex; align-items:center; gap:10px;
       padding:10px 12px; border-radius:12px;
       background:rgba(0,0,0,.40); backdrop-filter: blur(6px);
+      border:1px solid rgba(255,255,255,.10);
     }
     .tv-btn{
       color:#fff; font-family:Arial,sans-serif; font-size:14px;
@@ -42,28 +183,96 @@
     .tv-vol{ display:flex; align-items:center; gap:8px; color:#fff; font-family:Arial; font-size:13px; }
     .tv-vol input[type="range"]{ width:150px; cursor:pointer; }
 
-    #captionsWrap{ position:fixed; left:0; right:0; bottom:64px; z-index:9500; pointer-events:none; display:flex; justify-content:center; padding:0 14px; }
-    #captions{
-      max-width:min(1080px, 92vw);
-      padding:10px 14px;
+    /* Chat dock */
+    #chatDock{
+      position:fixed; right:14px; bottom:14px; z-index:10000;
+      width:min(360px, 94vw);
       border-radius:16px;
-      background: rgba(0,0,0,.35);
-      backdrop-filter: blur(8px);
-      border: 1px solid rgba(255,255,255,.10);
-      box-shadow: 0 10px 30px rgba(0,0,0,.35);
+      background: rgba(0,0,0,.40);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(0,170,255,.18);
+      box-shadow: 0 14px 50px rgba(0,0,0,.55);
+      overflow:hidden;
       font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
-      font-weight: 800;
-      letter-spacing: .2px;
-      color:#fff;
-      line-height:1.18;
-      text-align:center;
-      text-shadow: 0 2px 10px rgba(0,0,0,.65);
-      font-size: clamp(18px, 2.6vw, 34px);
-      display:none;
     }
-    .cw{ opacity:.78; }
-    .cw.hot{ opacity:1; display:inline-block; transform:scale(1.08); }
+    #chatHeader{
+      padding:10px 12px;
+      display:flex; align-items:center; justify-content:space-between;
+      border-bottom:1px solid rgba(255,255,255,.08);
+      background: linear-gradient(90deg, rgba(0,170,255,.10), rgba(0,0,0,0));
+      color:#fff;
+      font-weight:900;
+      letter-spacing:.3px;
+    }
+    #chatMeta{ font-size:12px; opacity:.8; font-weight:700; display:flex; align-items:center; gap:10px; }
+    #chatClose{
+      width:28px; height:28px; border-radius:10px;
+      border:1px solid rgba(255,255,255,.16);
+      background: rgba(0,0,0,.35);
+      color:#fff; cursor:pointer;
+      font-weight:900;
+      line-height:0;
+    }
 
+    #reactionBar{
+      padding:10px 12px;
+      border-bottom:1px solid rgba(255,255,255,.08);
+      display:flex; align-items:center; justify-content:space-between;
+      color:#fff;
+      gap:10px;
+    }
+    .rxBtns{ display:flex; gap:10px; align-items:center; }
+    .rxBtn{
+      display:flex; align-items:center; gap:8px;
+      border-radius:12px;
+      padding:8px 10px;
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(255,255,255,.06);
+      cursor:pointer;
+      user-select:none;
+      font-weight:800;
+      transition: transform .08s ease;
+    }
+    .rxBtn:active{ transform: scale(.98); }
+    .rxCount{ opacity:.9; font-weight:900; }
+    .rxNote{ font-size:12px; opacity:.75; font-weight:700; }
+
+    #chatList{ height:220px; overflow:auto; padding:10px 10px 6px 10px; color:#fff; }
+    .msg{ padding:8px 10px; border-radius:12px; margin-bottom:8px; background: rgba(0,0,0,.25); border:1px solid rgba(255,255,255,.06); }
+    .msg .u{ font-weight:900; color: rgba(0,170,255,.95); }
+    .msg .t{ font-weight:700; opacity:.92; margin-left:6px; }
+
+    #chatInputWrap{ padding:10px; border-top:1px solid rgba(255,255,255,.08); display:flex; gap:8px; }
+    #chatInput{
+      flex:1; border-radius:12px; border:1px solid rgba(255,255,255,.12);
+      background: rgba(0,0,0,.35); color:#fff; padding:10px 10px; outline:none; font-weight:700;
+    }
+    #sendBtn{
+      border-radius:12px; padding:10px 12px;
+      border:1px solid rgba(0,170,255,.35);
+      background: rgba(0,170,255,.14);
+      color:#fff; font-weight:900; cursor:pointer;
+    }
+
+    /* Chat open button (when closed) */
+    #chatOpenBtn{
+      position:fixed;
+      right:14px;
+      bottom:14px;
+      z-index:10000;
+      display:none;
+      padding:12px 14px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(0,0,0,.50);
+      color:#fff;
+      font-weight:950;
+      cursor:pointer;
+      box-shadow: 0 12px 40px rgba(0,0,0,.55);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+    }
+
+    /* Gate */
     #gate{
       position:fixed; inset:0; z-index:20000;
       display:flex; align-items:center; justify-content:center;
@@ -98,91 +307,63 @@
       width:100%;
     }
     #enterBtn.enabled{ cursor:pointer; opacity:1; }
-
-    #chatDock{
-      position:fixed; right:14px; bottom:14px; z-index:9999;
-      width:min(360px, 94vw);
-      border-radius:16px;
-      background: rgba(0,0,0,.40);
-      backdrop-filter: blur(10px);
-      border: 1px solid rgba(0,170,255,.18);
-      box-shadow: 0 14px 50px rgba(0,0,0,.55);
-      overflow:hidden;
-      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
-    }
-    #chatHeader{
-      padding:10px 12px;
-      display:flex; align-items:center; justify-content:space-between;
-      border-bottom:1px solid rgba(255,255,255,.08);
-      background: linear-gradient(90deg, rgba(0,170,255,.10), rgba(0,0,0,0));
-      color:#fff;
-      font-weight:900;
-      letter-spacing:.3px;
-    }
-    #chatMeta{ font-size:12px; opacity:.8; font-weight:700; }
-
-    #reactionBar{
-      padding:10px 12px;
-      border-bottom:1px solid rgba(255,255,255,.08);
-      display:flex; align-items:center; justify-content:space-between;
-      color:#fff;
-      gap:10px;
-    }
-    .rxBtns{ display:flex; gap:10px; align-items:center; }
-    .rxBtn{
-      display:flex; align-items:center; gap:8px;
-      border-radius:12px;
-      padding:8px 10px;
-      border:1px solid rgba(255,255,255,.14);
-      background: rgba(255,255,255,.06);
-      cursor:pointer;
-      user-select:none;
-      font-weight:800;
-      transition: transform .08s ease;
-    }
-    .rxBtn:active{ transform: scale(.98); }
-    .rxBtn[disabled]{ opacity:.45; cursor:not-allowed; }
-    .rxCount{ opacity:.9; font-weight:900; }
-    .rxNote{ font-size:12px; opacity:.75; font-weight:700; }
-
-    #chatList{ height:220px; overflow:auto; padding:10px 10px 6px 10px; color:#fff; }
-    .msg{ padding:8px 10px; border-radius:12px; margin-bottom:8px; background: rgba(0,0,0,.25); border:1px solid rgba(255,255,255,.06); }
-    .msg .u{ font-weight:900; color: rgba(0,170,255,.95); }
-    .msg .t{ font-weight:700; opacity:.92; margin-left:6px; }
-
-    #chatInputWrap{ padding:10px; border-top:1px solid rgba(255,255,255,.08); display:flex; gap:8px; }
-    #chatInput{
-      flex:1; border-radius:12px; border:1px solid rgba(255,255,255,.12);
-      background: rgba(0,0,0,.35); color:#fff; padding:10px 10px; outline:none; font-weight:700;
-    }
-    #sendBtn{
-      border-radius:12px; padding:10px 12px;
-      border:1px solid rgba(0,170,255,.35);
-      background: rgba(0,170,255,.14);
-      color:#fff; font-weight:900; cursor:pointer;
-    }
-
-    .bubble{
-      position:fixed; right:40px; bottom:220px; z-index:12000;
-      font-size:30px; filter: drop-shadow(0 10px 30px rgba(0,0,0,.65));
-      animation: floatUp 1.1s ease-out forwards;
-      pointer-events:none;
-    }
-    @keyframes floatUp{
-      0%{ transform: translateY(0) scale(1); opacity:1; }
-      100%{ transform: translateY(-120px) scale(1.25); opacity:0; }
-    }
   </style>
 </head>
 
 <body>
   <div class="badge">
-    <a href="/freestyle/submit/">Submit</a>
-    <a href="/admin/">Manage (staff)</a>
-    <a href="/freestyle/creator/">Creator</a>
+    <a href="/admin/">Submit</a>
+    <a href="/manage/">Manage (staff)</a>
+    <a href="/creator/">Creator</a>
   </div>
 
   <img id="logo" src="{% static 'freestyle/img/logo.png' %}" alt="Logo" />
+
+  <!-- Now playing -->
+  <div id="nowBanner">
+    <div class="nb-row">
+      <div class="nb-live">● LIVE</div>
+
+      <div class="nb-mid">
+        <div class="nb-label">NOW PLAYING</div>
+        <div id="nowTitle" class="nb-title">Loading…</div>
+        <div class="nb-meta">
+          <span id="nowTime">00:00</span>
+          <span style="opacity:.6;">•</span>
+          <span id="nowDur">00:00</span>
+        </div>
+        <div class="nb-bar"><div id="nowFill" class="nb-fill"></div></div>
+      </div>
+
+      <div class="nb-rx">
+        <button id="fireBtnMini" class="rxBtnMini" type="button">🔥 <span id="fireCountMini">0</span></button>
+        <button id="nahBtnMini" class="rxBtnMini" type="button">NAH <span id="nahCountMini">0</span></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Viewers -->
+  <div id="viewersPill">
+    <span>👁</span>
+    <span id="viewersCount">1100</span>
+    <span class="muted">watching</span>
+  </div>
+
+  <!-- Paid Ad -->
+  <div id="adCard">
+    <button id="adClose" type="button">×</button>
+    <a id="adLink" href="#" target="_blank" rel="noopener">
+      <div class="adHead">
+        <div class="adPaid">PAID SPOT</div>
+        <div id="adTitle">Sponsor</div>
+        <div id="adSub">Click to visit</div>
+      </div>
+      <div class="adBody">
+        <img id="adImg" alt="Sponsor image" />
+        <div id="adDesc"></div>
+      </div>
+    </a>
+  </div>
 
   <video
     id="player"
@@ -194,8 +375,6 @@
     disablepictureinpicture
   ></video>
 
-  <div id="captionsWrap"><div id="captions"></div></div>
-
   <div class="tv-controls">
     <button id="muteBtn" class="tv-btn" type="button">Unmute</button>
     <div class="tv-vol">
@@ -205,10 +384,14 @@
     <button id="fsBtn" class="tv-btn" type="button">Fullscreen</button>
   </div>
 
+  <!-- Chat -->
   <div id="chatDock">
     <div id="chatHeader">
       <div>LIVE CHAT</div>
-      <div id="chatMeta">Guest-…</div>
+      <div id="chatMeta">
+        <span id="guestName">Guest</span>
+        <button id="chatClose" type="button">×</button>
+      </div>
     </div>
 
     <div id="reactionBar">
@@ -222,11 +405,14 @@
     <div id="chatList"></div>
 
     <div id="chatInputWrap">
-      <input id="chatInput" placeholder="Say something…" maxlength="280" />
+      <input id="chatInput" placeholder="Say something…" maxlength="500" />
       <button id="sendBtn" type="button">Send</button>
     </div>
   </div>
 
+  <button id="chatOpenBtn" type="button">Chat</button>
+
+  <!-- Gate -->
   <div id="gate">
     <div class="gate-card">
       <h2>Tap to Enter</h2>
@@ -252,86 +438,100 @@
   </div>
 
   <script>
-    // ---------- helpers ----------
-    function getCookie(name) {
-      const value = `; ${document.cookie}`;
-      const parts = value.split(`; ${name}=`);
-      if (parts.length === 2) return parts.pop().split(';').shift();
-      return "";
-    }
-    const CSRF_TOKEN = getCookie("csrftoken");
+    // ---------------- config ----------------
+    const channelSlug = document.documentElement.dataset.channel || "main";
+    const NOW_URL   = `/api/freestyle/channel/${channelSlug}/now.json`;
+    const PING_URL  = `/api/freestyle/presence/ping.json`;
+    const CHAT_URL  = `/api/freestyle/channel/${channelSlug}/chat.json`;
+    const CHAT_SEND = `/api/freestyle/channel/${channelSlug}/chat/send.json`;
+    const REACT_URL = `/api/freestyle/channel/${channelSlug}/react.json`;
 
+    const POLL_MS = 2500;
+    const CHAT_POLL_MS = 1200;
+    const PRESENCE_MS = 15000;
+
+    const BASE_VIEWERS = 1100;
+
+    // drift rules
+    const HARD_DRIFT = 6.0;   // seconds (seek)
+    const SOFT_DRIFT = 1.0;   // seconds (slight rate)
+    const SOFT_RATE  = 0.05;
+    const SOFT_HOLD  = 900;
+
+    // ---------------- helpers ----------------
     function escapeHtml(s){
       return (s || "")
         .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
         .replaceAll('"',"&quot;").replaceAll("'","&#039;");
     }
-
-    // ---------- elements ----------
-    const videoEl    = document.getElementById("player");
-    const captionsEl = document.getElementById("captions");
-
-    const gateEl     = document.getElementById("gate");
-    const agreeBox   = document.getElementById("agreeBox");
-    const enterBtn   = document.getElementById("enterBtn");
-
-    const muteBtn    = document.getElementById("muteBtn");
-    const volSlider  = document.getElementById("volSlider");
-    const fsBtn      = document.getElementById("fsBtn");
-
-    const chatMeta   = document.getElementById("chatMeta");
-    const chatList   = document.getElementById("chatList");
-    const chatInput  = document.getElementById("chatInput");
-    const sendBtn    = document.getElementById("sendBtn");
-
-    const fireBtn    = document.getElementById("fireBtn");
-    const nahBtn     = document.getElementById("nahBtn");
-    const fireCount  = document.getElementById("fireCount");
-    const nahCount   = document.getElementById("nahCount");
-    const rxNote     = document.getElementById("rxNote");
-
-    // ---------- config ----------
-    const channelSlug = "main";
-
-    // ✅ match your screenshot + your app namespace
-    const nowUrl        = `/api/freestyle/channel/${channelSlug}/now.json`;
-    const captionsUrlFor = (videoId) => `/api/freestyle/video/${videoId}/captions.json`;
-
-    const chatPollUrl = (afterId) => `/api/freestyle/channel/${channelSlug}/chat/messages.json?after_id=${afterId||0}`;
-    const chatSendUrl = `/api/freestyle/channel/${channelSlug}/chat/send.json`;
-
-    const reactionStateUrl = (videoId) => `/api/freestyle/channel/${channelSlug}/reactions/state.json?video_id=${encodeURIComponent(videoId)}`;
-    const reactionVoteUrl  = `/api/freestyle/channel/${channelSlug}/reactions/vote.json`;
-
-    const POLL_MS = 6000;
-    const CHAT_POLL_MS = 1500;
-    const DRIFT_FIX_SEC = 4;
-    const BIG_DRIFT_SEC = 10;
-
-    // ---------- state ----------
-    let hls = null;
-    let currentVideoId = null;
-    let currentSrc = null;
-    let switching = false;
-
-    let capWords = [];
-    let capIndex = 0;
-    let capLastVideoId = null;
-
-    let lastChatId = 0;
-
-    // ---------- ids ----------
-    function getClientId(){
-      let cid = localStorage.getItem("fs_client_id");
-      if (!cid){
-        cid = "cid_" + Math.random().toString(16).slice(2) + Date.now().toString(16);
-        localStorage.setItem("fs_client_id", cid);
-      }
-      return cid;
+    function fmtTime(sec){
+      sec = Math.max(0, Math.floor(sec || 0));
+      const m = Math.floor(sec/60);
+      const s = sec % 60;
+      return `${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
     }
-    const CLIENT_ID = getClientId();
+    function clamp(n,min,max){ return Math.max(min, Math.min(max, n)); }
 
-    function getGuestName(){
+    // ---------------- elements ----------------
+    const videoEl   = document.getElementById("player");
+
+    const nowBanner = document.getElementById("nowBanner");
+    const nowTitle  = document.getElementById("nowTitle");
+    const nowTime   = document.getElementById("nowTime");
+    const nowDur    = document.getElementById("nowDur");
+    const nowFill   = document.getElementById("nowFill");
+
+    const viewersPill  = document.getElementById("viewersPill");
+    const viewersCount = document.getElementById("viewersCount");
+
+    const adCard  = document.getElementById("adCard");
+    const adClose = document.getElementById("adClose");
+    const adLink  = document.getElementById("adLink");
+    const adTitle = document.getElementById("adTitle");
+    const adSub   = document.getElementById("adSub");
+    const adImg   = document.getElementById("adImg");
+    const adDesc  = document.getElementById("adDesc");
+
+    const gateEl   = document.getElementById("gate");
+    const agreeBox = document.getElementById("agreeBox");
+    const enterBtn = document.getElementById("enterBtn");
+
+    const muteBtn   = document.getElementById("muteBtn");
+    const volSlider = document.getElementById("volSlider");
+    const fsBtn     = document.getElementById("fsBtn");
+
+    const chatDock  = document.getElementById("chatDock");
+    const chatOpenBtn = document.getElementById("chatOpenBtn");
+    const chatClose = document.getElementById("chatClose");
+    const guestName = document.getElementById("guestName");
+
+    const chatList  = document.getElementById("chatList");
+    const chatInput = document.getElementById("chatInput");
+    const sendBtn   = document.getElementById("sendBtn");
+
+    const fireBtn   = document.getElementById("fireBtn");
+    const nahBtn    = document.getElementById("nahBtn");
+    const fireCount = document.getElementById("fireCount");
+    const nahCount  = document.getElementById("nahCount");
+    const rxNote    = document.getElementById("rxNote");
+
+    const fireBtnMini = document.getElementById("fireBtnMini");
+    const nahBtnMini  = document.getElementById("nahBtnMini");
+    const fireCountMini = document.getElementById("fireCountMini");
+    const nahCountMini  = document.getElementById("nahCountMini");
+
+    // ---------------- ids ----------------
+    function getSid(){
+      let x = localStorage.getItem("fs_sid");
+      if (!x){
+        x = (crypto?.randomUUID ? crypto.randomUUID() : ("sid_" + Math.random().toString(16).slice(2)));
+        localStorage.setItem("fs_sid", x);
+      }
+      return x;
+    }
+    const SID = getSid();
+
+    function getGuest(){
       let g = localStorage.getItem("fs_guest_name");
       if (!g){
         g = "Guest-" + Math.floor(1000 + Math.random()*9000);
@@ -339,15 +539,19 @@
       }
       return g;
     }
-    const GUEST = getGuestName();
-    chatMeta.textContent = GUEST;
+    const GUEST = getGuest();
+    guestName.textContent = GUEST;
 
-    // ---------- video setup ----------
+    // ---------------- hls ----------------
+    let hls = null;
     function destroyHls(){ if (hls) { hls.destroy(); hls = null; } }
 
-    function attachSource(url, isHls){
+    function attachSource(url){
       destroyHls();
-      if (isHls) {
+      if (!url){ videoEl.src = ""; return; }
+
+      const isHls = url.includes(".m3u8");
+      if (isHls){
         if (videoEl.canPlayType("application/vnd.apple.mpegurl")) {
           videoEl.src = url;
         } else if (window.Hls) {
@@ -363,11 +567,57 @@
       }
     }
 
-    function safeSeek(t){
-      t = Math.max(0, Math.floor(t || 0));
-      try { videoEl.currentTime = t; } catch(e) {}
+    // ---------------- live clock ----------------
+    let baseOffset = 0;
+    let basePerf = 0;
+    let baseSet = false;
+
+    function setBase(offsetSeconds){
+      baseOffset = Math.max(0, Number(offsetSeconds) || 0);
+      basePerf = performance.now();
+      baseSet = true;
+    }
+    function desiredTime(){
+      if (!baseSet) return 0;
+      return Math.max(0, baseOffset + (performance.now() - basePerf) / 1000);
     }
 
+    let softTimer = null;
+    function setSoftRate(r){
+      clearTimeout(softTimer);
+      videoEl.playbackRate = r;
+      softTimer = setTimeout(() => videoEl.playbackRate = 1.0, SOFT_HOLD);
+    }
+
+    // ---------------- state ----------------
+    let lastPlayUrl = null;
+    let lastStartEpoch = 0;
+    let allowSeekUntil = 0;
+
+    function allowProgrammaticSeek(ms, fn){
+      allowSeekUntil = Date.now() + ms;
+      fn();
+    }
+
+    // ---------------- UI: chat open/close + viewer positioning ----------------
+    function setChatOpen(open){
+      if (open){
+        chatDock.style.display = "block";
+        chatOpenBtn.style.display = "none";
+        viewersPill.classList.remove("chatClosed");
+        localStorage.setItem("fs_chat_open", "1");
+      } else {
+        chatDock.style.display = "none";
+        chatOpenBtn.style.display = "block";
+        viewersPill.classList.add("chatClosed");
+        localStorage.setItem("fs_chat_open", "0");
+      }
+    }
+    chatClose.addEventListener("click", () => setChatOpen(false));
+    chatOpenBtn.addEventListener("click", () => setChatOpen(true));
+    setChatOpen(localStorage.getItem("fs_chat_open") !== "0");
+
+    // ---------------- UI: mute/volume/fullscreen ----------------
     videoEl.muted = true;
     videoEl.volume = parseFloat(volSlider.value);
     videoEl.controls = false;
@@ -394,13 +644,23 @@
       } catch(e) {}
     });
 
-    // ---------- gate ----------
+    // keep "live tv" playing
+    videoEl.addEventListener("pause", () => setTimeout(() => videoEl.play().catch(()=>{}), 150));
+
+    // prevent user scrubbing
+    videoEl.addEventListener("seeking", () => {
+      if (Date.now() < allowSeekUntil) return;
+      if (!baseSet) return;
+      const want = desiredTime();
+      allowProgrammaticSeek(900, () => { videoEl.currentTime = want; });
+    });
+
+    // ---------------- Gate ----------------
     function setEnterEnabled(on){
       enterBtn.disabled = !on;
       enterBtn.classList.toggle("enabled", !!on);
     }
     setEnterEnabled(false);
-
     agreeBox.addEventListener("change", () => setEnterEnabled(agreeBox.checked));
 
     enterBtn.addEventListener("click", async () => {
@@ -410,244 +670,207 @@
       try { await videoEl.play(); } catch(e) {}
     });
 
-    // ---------- now.json ----------
+    // ---------------- Presence ----------------
+    async function pingPresence(){
+      try{
+        await fetch(`${PING_URL}?sid=${encodeURIComponent(SID)}&channel=${encodeURIComponent(channelSlug)}`, { cache:"no-store" });
+      }catch(e){}
+    }
+
+    // ---------------- Now polling ----------------
     async function fetchNow(){
-      const res = await fetch(nowUrl, { cache:"no-store" });
-      if (!res.ok) throw new Error(`now.json HTTP ${res.status}`);
+      const res = await fetch(NOW_URL, { cache:"no-store" });
+      if (!res.ok) throw new Error(`now.json ${res.status}`);
       return await res.json();
     }
 
-    // ---------- captions ----------
-    async function loadCaptions(videoId){
-      if (!videoId || capLastVideoId === videoId) return;
-      capLastVideoId = videoId;
-      capWords = []; capIndex = 0;
-      captionsEl.style.display = "none";
-      captionsEl.textContent = "";
-
-      try{
-        const res = await fetch(captionsUrlFor(videoId), { cache:"no-store" });
-        if (!res.ok) throw new Error("no captions");
-        const data = await res.json();
-        capWords = Array.isArray(data.words) ? data.words : [];
-        capIndex = 0;
-        if (capWords.length) captionsEl.style.display = "block";
-      }catch(e){
-        capWords = []; capIndex = 0;
-        captionsEl.style.display = "none";
-      }
-    }
-
-    function findIndexForTime(t){
-      let lo = 0, hi = capWords.length - 1, ans = 0;
-      while (lo <= hi){
-        const mid = (lo + hi) >> 1;
-        const s = capWords[mid].s || 0;
-        if (s <= t){ ans = mid; lo = mid + 1; }
-        else hi = mid - 1;
-      }
-      return ans;
-    }
-
-    function renderCaptions(){
-      if (!capWords.length) return;
-      const t = videoEl.currentTime || 0;
-
-      if (capIndex >= capWords.length || (capWords[capIndex] && (capWords[capIndex].s || 0) > t + 0.4)){
-        capIndex = findIndexForTime(t);
-      }
-      while (capIndex < capWords.length && (capWords[capIndex].e || 0) < t) capIndex++;
-      if (capIndex >= capWords.length) return;
-
-      const start = Math.max(0, capIndex - 3);
-      const end   = Math.min(capWords.length, capIndex + 6);
-
-      const parts = [];
-      for (let i=start; i<end; i++){
-        const w = (capWords[i].w || "").trim();
-        if (!w) continue;
-        const isHot = (i === capIndex) && (t >= (capWords[i].s||0) - 0.02) && (t <= (capWords[i].e||0) + 0.02);
-        parts.push(`<span class="cw ${isHot ? "hot":""}">${escapeHtml(w)}</span>`);
-      }
-      captionsEl.innerHTML = parts.join(" ");
-      captionsEl.style.display = parts.length ? "block" : "none";
-    }
-    (function rafLoop(){ renderCaptions(); requestAnimationFrame(rafLoop); })();
-
-    // ---------- server apply ----------
-    async function applyServer(data){
-      const item = data.item;
-      const offset = data.offset_seconds;
-
-      if (!item || !item.play_url || typeof offset !== "number"){
+    function applySponsor(s){
+      const has = s && (s.url || s.title || s.image_url || s.description);
+      if (!has){
+        adCard.style.display = "none";
         return;
       }
+      adLink.href = s.url || "#";
+      adTitle.textContent = s.title || "Sponsor";
+      adSub.textContent = s.subtitle || "Click to visit sponsor";
+      adDesc.textContent = (s.description || "").trim();
 
-      const nextId = String(item.video_id ?? "0");
-      const nextSrc = String(item.play_url);
-      const nextIsHls = !!item.is_hls;
-
-      if (nextId !== currentVideoId){
-        currentVideoId = nextId;
-        await refreshReactions();
-        await loadCaptions(nextId);
+      if (s.image_url){
+        adImg.src = s.image_url;
+        adImg.style.display = "block";
+      } else {
+        adImg.style.display = "none";
       }
+      adCard.style.display = "block";
+    }
 
-      if (nextSrc !== currentSrc){
-        if (switching) return;
-        switching = true;
+    adClose.addEventListener("click", () => { adCard.style.display = "none"; });
 
-        currentSrc = nextSrc;
-        videoEl.style.visibility = "hidden";
-        attachSource(nextSrc, nextIsHls);
+    function applyViewers(realCount){
+      const n = BASE_VIEWERS + Math.max(0, Number(realCount || 0));
+      viewersCount.textContent = String(n);
+      viewersPill.style.display = "inline-flex";
+    }
+
+    async function applyNow(data){
+      if (!data || !data.ok) return;
+
+      nowBanner.style.display = "block";
+      nowTitle.textContent = data.title || "—";
+
+      // base + real
+      applyViewers(data.viewers || 0);
+
+      // sponsor
+      applySponsor(data.sponsor || {});
+
+      // votes
+      const f = data.votes?.fire ?? 0;
+      const n = data.votes?.nah ?? 0;
+      fireCount.textContent = f; nahCount.textContent = n;
+      fireCountMini.textContent = f; nahCountMini.textContent = n;
+
+      // sync clock
+      setBase(Number(data.offset_seconds || 0));
+
+      const playUrl = data.play_url || "";
+      const startEpoch = Number(data.start_epoch || 0);
+
+      // if video changed -> load new source and seek to offset
+      const changed = (playUrl && playUrl !== lastPlayUrl) || (startEpoch && startEpoch !== lastStartEpoch);
+
+      if (changed){
+        lastPlayUrl = playUrl;
+        lastStartEpoch = startEpoch;
+
+        attachSource(playUrl);
+        videoEl.load();
 
         const onMeta = async () => {
           videoEl.removeEventListener("loadedmetadata", onMeta);
-          safeSeek(offset);
-          videoEl.style.visibility = "visible";
+          const want = desiredTime();
+          allowProgrammaticSeek(900, () => { videoEl.currentTime = want; });
+          videoEl.playbackRate = 1.0;
           try { await videoEl.play(); } catch(e) {}
-          switching = false;
         };
         videoEl.addEventListener("loadedmetadata", onMeta);
-
         try { await videoEl.play(); } catch(e) {}
         return;
       }
 
-      const ct = (videoEl.currentTime || 0);
-      const drift = Math.abs(ct - offset);
-      if (!videoEl.seeking && drift > BIG_DRIFT_SEC) safeSeek(offset);
-      else if (!videoEl.seeking && drift > DRIFT_FIX_SEC) safeSeek(offset);
+      // drift correction without restarting
+      if (videoEl.readyState >= 2){
+        const want = desiredTime();
+        const actual = Number(videoEl.currentTime || 0);
+        const drift = want - actual;
+
+        if (Math.abs(drift) > HARD_DRIFT){
+          allowProgrammaticSeek(900, () => { videoEl.currentTime = want; });
+          videoEl.playbackRate = 1.0;
+        } else if (Math.abs(drift) > SOFT_DRIFT){
+          setSoftRate(1.0 + (drift > 0 ? SOFT_RATE : -SOFT_RATE));
+        } else {
+          videoEl.playbackRate = 1.0;
+        }
+      }
+
+      // banner timer + bar
+      const dur = Number(data.duration_seconds || 0) || Number(videoEl.duration || 0);
+      const ct = Number(videoEl.currentTime || 0);
+      nowTime.textContent = fmtTime(ct);
+      nowDur.textContent = fmtTime(dur || 0);
+      const pct = (dur > 0) ? clamp((ct/dur)*100, 0, 100) : 0;
+      nowFill.style.width = `${pct}%`;
     }
 
     async function syncNow(){
-      const data = await fetchNow();
-      await applyServer(data);
+      try{
+        const data = await fetchNow();
+        await applyNow(data);
+      }catch(e){
+        console.warn("now.json failed:", e);
+      }
     }
 
-    videoEl.addEventListener("pause", () => {
-      setTimeout(() => videoEl.play().catch(()=>{}), 150);
-    });
+    // ---------------- chat ----------------
+    let lastChatId = 0;
 
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") {
-        syncNow().catch(()=>{});
-        videoEl.play().catch(()=>{});
-      }
-    });
-
-    // ✅ IMPORTANT: no alert() — ever
-    syncNow().catch((e) => console.warn("Live TV endpoint failed:", nowUrl, e));
-    setInterval(() => syncNow().catch(()=>{}), POLL_MS);
-
-    // ---------- chat ----------
     function appendMsg(m){
       const div = document.createElement("div");
       div.className = "msg";
-      div.innerHTML = `<span class="u">${escapeHtml(m.username)}</span><span class="t">${escapeHtml(m.message)}</span>`;
+      div.innerHTML = `<span class="u">${escapeHtml(m.username)}</span><span class="t">${escapeHtml(m.text)}</span>`;
       chatList.appendChild(div);
       chatList.scrollTop = chatList.scrollHeight;
     }
 
     async function pollChat(){
       try{
-        const res = await fetch(chatPollUrl(lastChatId), { cache:"no-store" });
+        const res = await fetch(`${CHAT_URL}?since=${encodeURIComponent(String(lastChatId))}`, { cache:"no-store" });
         if (!res.ok) return;
         const data = await res.json();
-        const items = Array.isArray(data.items) ? data.items : [];
-        for (const m of items){
+        const msgs = Array.isArray(data.messages) ? data.messages : [];
+        for (const m of msgs){
           lastChatId = Math.max(lastChatId, m.id || 0);
           appendMsg(m);
         }
       }catch(e){}
     }
-    setInterval(pollChat, CHAT_POLL_MS);
-    pollChat();
 
     async function sendChat(){
-      const msg = (chatInput.value || "").trim();
-      if (!msg) return;
+      const text = (chatInput.value || "").trim();
+      if (!text) return;
       chatInput.value = "";
-
       try{
-        await fetch(chatSendUrl, {
+        await fetch(CHAT_SEND, {
           method:"POST",
-          headers: {
-            "Content-Type":"application/json",
-            "X-CSRFToken": CSRF_TOKEN
-          },
-          body: JSON.stringify({ username: GUEST, message: msg })
+          headers:{ "Content-Type":"application/json" },
+          body: JSON.stringify({ sid: SID, username: GUEST, text })
         });
       }catch(e){}
     }
+
     sendBtn.addEventListener("click", sendChat);
     chatInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendChat(); });
 
-    // ---------- reactions ----------
-    function votedKey(videoId){ return `fs_voted_${videoId}`; }
-
-    function bubble(emoji){
-      const b = document.createElement("div");
-      b.className = "bubble";
-      b.textContent = emoji;
-      document.body.appendChild(b);
-      setTimeout(() => b.remove(), 1200);
-    }
-
-    async function refreshReactions(){
-      if (!currentVideoId) return;
+    // ---------------- reactions ----------------
+    async function vote(vote){
       try{
-        const res = await fetch(reactionStateUrl(currentVideoId), {
-          cache:"no-store",
-          headers: { "X-Client-Id": CLIENT_ID }
+        const res = await fetch(REACT_URL, {
+          method:"POST",
+          headers:{ "Content-Type":"application/json" },
+          body: JSON.stringify({ sid: SID, vote })
         });
-        if (!res.ok) return;
         const data = await res.json();
         if (!data.ok) return;
 
-        fireCount.textContent = data.counts?.fire ?? 0;
-        nahCount.textContent  = data.counts?.nah  ?? 0;
-
-        const votedLocal = localStorage.getItem(votedKey(currentVideoId));
-        const voted = data.voted || votedLocal;
-
-        if (voted){
-          fireBtn.disabled = true;
-          nahBtn.disabled = true;
-          rxNote.textContent = "voted";
-        } else {
-          fireBtn.disabled = false;
-          nahBtn.disabled = false;
-          rxNote.textContent = "Vote once per video";
-        }
-      }catch(e){}
-    }
-
-    async function vote(reaction){
-      if (!currentVideoId) return;
-      if (localStorage.getItem(votedKey(currentVideoId))) return;
-
-      try{
-        const res = await fetch(reactionVoteUrl, {
-          method:"POST",
-          headers: {
-            "Content-Type":"application/json",
-            "X-CSRFToken": CSRF_TOKEN
-          },
-          body: JSON.stringify({ video_id: currentVideoId, reaction, client_id: CLIENT_ID })
-        });
-        const data = await res.json();
-        if (!data.ok && !data.already_voted) return;
-
-        localStorage.setItem(votedKey(currentVideoId), reaction);
-        bubble(reaction === "fire" ? "🔥" : "🚫");
-        await refreshReactions();
+        const f = data.votes?.fire ?? 0;
+        const n = data.votes?.nah ?? 0;
+        fireCount.textContent = f; nahCount.textContent = n;
+        fireCountMini.textContent = f; nahCountMini.textContent = n;
+        rxNote.textContent = "voted";
       }catch(e){}
     }
 
     fireBtn.addEventListener("click", () => vote("fire"));
     nahBtn.addEventListener("click", () => vote("nah"));
-    setInterval(refreshReactions, 2500);
+    fireBtnMini.addEventListener("click", () => vote("fire"));
+    nahBtnMini.addEventListener("click", () => vote("nah"));
+
+    // ---------------- start ----------------
+    pingPresence();
+    syncNow();
+    pollChat();
+
+    setInterval(pingPresence, PRESENCE_MS);
+    setInterval(syncNow, POLL_MS);
+    setInterval(pollChat, CHAT_POLL_MS);
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible"){
+        syncNow().catch(()=>{});
+        videoEl.play().catch(()=>{});
+      }
+    });
   </script>
 </body>
 </html>

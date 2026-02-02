@@ -1,472 +1,510 @@
 (() => {
   "use strict";
 
-  // -------------------------
-  // Config
-  // -------------------------
+  // ---------- helpers ----------
+  function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
+  function escapeHtml(s){
+    return (s || "")
+      .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;").replaceAll("'","&#039;");
+  }
+  function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(";").shift();
+    return "";
+  }
+
+  // ---------- config ----------
   const CHANNEL = (document.documentElement.dataset.channel || "main").trim();
+
+  // IMPORTANT: these MUST match freestyle/urls.py
   const NOW_URL = `/api/freestyle/channel/${encodeURIComponent(CHANNEL)}/now.json`;
-  const PING_URL = `/api/freestyle/presence/ping.json`;
+  const PRESENCE_URL = `/api/freestyle/presence/ping.json`;
+  const CHAT_POLL_URL = (afterId) =>
+    `/api/freestyle/channel/${encodeURIComponent(CHANNEL)}/chat/messages.json?after_id=${afterId || 0}`;
+  const CHAT_SEND_URL =
+    `/api/freestyle/channel/${encodeURIComponent(CHANNEL)}/chat/send.json`;
 
-  const POLL_MS = 5000;
+  const REACT_STATE_URL = (videoId) =>
+    `/api/freestyle/channel/${encodeURIComponent(CHANNEL)}/reactions/state.json?video_id=${encodeURIComponent(videoId)}`;
+  const REACT_VOTE_URL =
+    `/api/freestyle/channel/${encodeURIComponent(CHANNEL)}/reactions/vote.json`;
 
-  // Drift behavior:
-  const HARD_SEEK_DRIFT = 6.0;
-  const SOFT_DRIFT = 1.0;
-  const SOFT_RATE = 0.05;
-  const SOFT_RATE_HOLD_MS = 900;
+  const DURATION_SAVE_URL = (videoId) =>
+    `/api/freestyle/video/${encodeURIComponent(videoId)}/duration.json`;
 
-  const BANNER_MS = 15000;
-  const AD_MS = 30000;
+  const CSRF_TOKEN = getCookie("csrftoken");
 
-  // -------------------------
-  // Elements
-  // -------------------------
-  const video = document.getElementById("tvVideo");
+  const POLL_MS = 2500;
+  const CHAT_POLL_MS = 1200;
+  const PRESENCE_MS = 10000;
 
-  const banner = document.getElementById("topBanner");
-  const bannerTitle = document.getElementById("bannerTitle");
+  const VIEW_BASE = 1100;
 
-  const adBar = document.getElementById("adBar");
-  const adClose = document.getElementById("adClose");
+  // Sync policy (NO rewind ever)
+  const SEEK_FORWARD_IF_BEHIND_SEC = 6;   // only jump forward if badly behind
+  const DRIFT_OK_SEC = 1.25;              // do nothing if within this window
 
-  const viewersPill = document.getElementById("viewersPill");
-  const viewersCount = document.getElementById("viewersCount");
+  // ---------- elements ----------
+  const videoEl = document.getElementById("player");
+  const qualityHud = document.getElementById("qualityHud");
 
-  const chatPanel = document.getElementById("chatPanel");
-  const chatOpenBtn = document.getElementById("chatOpenBtn");
-  const chatCloseBtn = document.getElementById("chatCloseBtn");
-
-  const overlay = document.getElementById("enterOverlay");
-  const overlayCheck = document.getElementById("enterAgree");
-  const overlayBtn = document.getElementById("enterBtn");
-
-  // Volume UI
   const muteBtn = document.getElementById("muteBtn");
   const volSlider = document.getElementById("volSlider");
-  const volPct = document.getElementById("volPct");
+  const fsBtn = document.getElementById("fsBtn");
 
-  // -------------------------
-  // State
-  // -------------------------
-  let sid = localStorage.getItem("freestyle_sid");
-  if (!sid) {
-    sid = crypto.randomUUID();
-    localStorage.setItem("freestyle_sid", sid);
-  }
+  const viewerCountEl = document.getElementById("viewerCount");
 
-  let lastPlayUrl = null;
-  let lastStartEpoch = 0;
+  const chatDock = document.getElementById("chatDock");
+  const chatOpenBtn = document.getElementById("chatOpenBtn");
+  const chatCloseBtn = document.getElementById("chatCloseBtn");
+  const chatUserEl = document.getElementById("chatUser");
+  const chatList = document.getElementById("chatList");
+  const chatInput = document.getElementById("chatInput");
+  const sendBtn = document.getElementById("sendBtn");
 
-  let lastBannerKey = null;
-  let lastAdKey = null;
+  const fireBtn = document.getElementById("fireBtn");
+  const nahBtn = document.getElementById("nahBtn");
+  const fireCount = document.getElementById("fireCount");
+  const nahCount = document.getElementById("nahCount");
+  const rxNote = document.getElementById("rxNote");
 
-  let softTimer = null;
+  const gateEl = document.getElementById("gate");
+  const agreeBox = document.getElementById("agreeBox");
+  const enterBtn = document.getElementById("enterBtn");
 
-  // LIVE clock base
-  let baseOffset = 0;
-  let basePerfNow = 0;
-  let baseSet = false;
-
-  // allow programmatic seeks
-  let allowSeekUntilMs = 0;
-
-  // Volume persistence
-  const VOL_KEY = "freestyle_volume";
-  const MUTE_KEY = "freestyle_muted";
-
-  // -------------------------
-  // Helpers
-  // -------------------------
-  function clamp(n, min, max) {
-    return Math.max(min, Math.min(max, n));
-  }
-
-  function show(el) { el?.classList.remove("is-hidden"); }
-  function hide(el) { el?.classList.add("is-hidden"); }
-
-  function currentTimeSafe() {
-    const t = Number(video.currentTime);
-    return Number.isFinite(t) ? t : 0;
-  }
-
-  function durationSafe() {
-    const d = Number(video.duration);
-    return Number.isFinite(d) ? d : 0;
-  }
-
-  function setViewers(n) {
-    if (!viewersPill || !viewersCount) return;
-    viewersCount.textContent = `${n}`;
-    show(viewersPill);
-  }
-
-  function showBanner(title, key) {
-    if (!banner || !bannerTitle) return;
-    if (lastBannerKey === key) return;
-    lastBannerKey = key;
-
-    bannerTitle.textContent = title || "";
-    show(banner);
-    banner.classList.remove("fade-out");
-    window.setTimeout(() => {
-      banner.classList.add("fade-out");
-      window.setTimeout(() => hide(banner), 500);
-    }, BANNER_MS);
-  }
-
-  function showAd(key) {
-    if (!adBar) return;
-    if (lastAdKey === key) return;
-    lastAdKey = key;
-
-    show(adBar);
-    adBar.classList.remove("slide-down");
-    window.setTimeout(() => {
-      adBar.classList.add("slide-down");
-      window.setTimeout(() => hide(adBar), 450);
-    }, AD_MS);
-  }
-
-  function isOverlayAccepted() {
-    return sessionStorage.getItem("freestyle_entered") === "1";
-  }
-
-  function showOverlayIfNeeded() {
-    if (!overlay) return;
-    if (isOverlayAccepted()) {
-      hide(overlay);
-      return;
+  // ---------- ids ----------
+  function getGuestName(){
+    let g = localStorage.getItem("fs_guest_name");
+    if (!g){
+      g = "Guest-" + Math.floor(1000 + Math.random()*9000);
+      localStorage.setItem("fs_guest_name", g);
     }
-    show(overlay);
-    overlayBtn.disabled = true;
-    overlayBtn.classList.add("is-disabled");
+    return g;
+  }
+  const GUEST = getGuestName();
+  chatUserEl.textContent = GUEST;
+
+  function getSid(){
+    let sid = sessionStorage.getItem("fs_sid");
+    if (!sid){
+      sid = (crypto?.randomUUID?.() || ("sid_" + Math.random().toString(16).slice(2) + Date.now().toString(16)));
+      sessionStorage.setItem("fs_sid", sid);
+    }
+    return sid;
+  }
+  const SID = getSid();
+
+  function getClientId(){
+    let cid = localStorage.getItem("fs_client_id");
+    if (!cid){
+      cid = "cid_" + Math.random().toString(16).slice(2) + Date.now().toString(16);
+      localStorage.setItem("fs_client_id", cid);
+    }
+    return cid;
+  }
+  const CLIENT_ID = getClientId();
+
+  // ---------- UI ----------
+  function setQuality(text){
+    if (qualityHud) qualityHud.textContent = text;
+  }
+  function updateMuteBtn(){
+    muteBtn.textContent = videoEl.muted ? "Unmute" : "Mute";
   }
 
-  async function safePlay() {
-    try { await video.play(); } catch (_) {}
+  // start muted until enter
+  videoEl.muted = true;
+  videoEl.volume = parseFloat(volSlider.value || "0.8");
+  updateMuteBtn();
+
+  muteBtn.addEventListener("click", async () => {
+    videoEl.muted = !videoEl.muted;
+    updateMuteBtn();
+    try { await videoEl.play(); } catch(e) {}
+  });
+
+  volSlider.addEventListener("input", () => {
+    const v = parseFloat(volSlider.value || "0.8");
+    videoEl.volume = isFinite(v) ? v : 0.8;
+    if (videoEl.volume > 0) videoEl.muted = false;
+    updateMuteBtn();
+  });
+
+  fsBtn.addEventListener("click", async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await videoEl.requestFullscreen();
+    } catch(e) {}
+  });
+
+  // ---------- enter overlay ----------
+  function setEnterEnabled(on){
+    enterBtn.disabled = !on;
+    enterBtn.classList.toggle("enabled", !!on);
   }
+  setEnterEnabled(false);
+  agreeBox.addEventListener("change", () => setEnterEnabled(agreeBox.checked));
 
-  function allowProgrammaticSeek(ms, fn) {
-    allowSeekUntilMs = Date.now() + ms;
-    try { fn(); } finally {}
-  }
+  enterBtn.addEventListener("click", async () => {
+    gateEl.style.display = "none";
+    videoEl.muted = false;
+    updateMuteBtn();
+    try { await videoEl.play(); } catch(e) {}
+  });
 
-  function desiredLiveTime() {
-    if (!baseSet) return 0;
-    const elapsed = (performance.now() - basePerfNow) / 1000;
-    return Math.max(0, baseOffset + elapsed);
-  }
-
-  function setSoftPlaybackRate(rate) {
-    clearTimeout(softTimer);
-    video.playbackRate = rate;
-    softTimer = setTimeout(() => {
-      video.playbackRate = 1.0;
-    }, SOFT_RATE_HOLD_MS);
-  }
-
-  function updateBaseClockFromServer(offsetSeconds) {
-    baseOffset = Math.max(0, Number(offsetSeconds) || 0);
-    basePerfNow = performance.now();
-    baseSet = true;
-  }
-
-  // -------------------------
-  // VOLUME UI
-  // -------------------------
-  function setMuteIcon() {
-    const muted = video.muted || video.volume === 0;
-    if (muteBtn) muteBtn.textContent = muted ? "🔇" : "🔊";
-  }
-
-  function applySavedVolume() {
-    const savedVol = Number(localStorage.getItem(VOL_KEY));
-    const savedMuted = localStorage.getItem(MUTE_KEY) === "1";
-
-    const vol01 = Number.isFinite(savedVol) ? clamp(savedVol, 0, 1) : 1.0;
-
-    if (volSlider) volSlider.value = String(Math.round(vol01 * 100));
-    if (volPct) volPct.textContent = `${Math.round(vol01 * 100)}%`;
-
-    // If overlay not accepted, keep muted
-    if (!isOverlayAccepted()) {
-      video.muted = true;
-      video.volume = 0.0;
+  // ---------- chat open/close ----------
+  function setChatOpen(open){
+    if (open){
+      chatDock.style.display = "block";
+      chatOpenBtn.style.display = "none";
+      document.body.classList.remove("chat-closed");
     } else {
-      video.volume = vol01;
-      video.muted = savedMuted ? true : false;
+      chatDock.style.display = "none";
+      chatOpenBtn.style.display = "block";
+      document.body.classList.add("chat-closed");
     }
+    localStorage.setItem("fs_chat_open", open ? "1" : "0");
+  }
+  setChatOpen(localStorage.getItem("fs_chat_open") !== "0");
+  chatCloseBtn.addEventListener("click", () => setChatOpen(false));
+  chatOpenBtn.addEventListener("click", () => setChatOpen(true));
 
-    setMuteIcon();
+  // ---------- reactions ----------
+  function votedKey(videoId){ return `fs_voted_${videoId}`; }
+
+  function bubble(emoji){
+    const b = document.createElement("div");
+    b.className = "bubble";
+    b.textContent = emoji;
+    document.body.appendChild(b);
+    setTimeout(() => b.remove(), 1200);
   }
 
-  function initVolumeUI() {
-    if (volSlider) {
-      volSlider.addEventListener("input", () => {
-        const v = clamp(Number(volSlider.value) / 100, 0, 1);
-        if (volPct) volPct.textContent = `${Math.round(v * 100)}%`;
+  let currentVideoId = null;
 
-        localStorage.setItem(VOL_KEY, String(v));
+  async function refreshReactions(){
+    if (!currentVideoId) return;
+    try{
+      const res = await fetch(REACT_STATE_URL(currentVideoId), {
+        cache:"no-store",
+        headers: { "X-Client-Id": CLIENT_ID }
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.ok) return;
 
-        // Only apply sound if user accepted overlay
-        if (isOverlayAccepted()) {
-          video.volume = v;
-          if (v > 0) {
-            video.muted = false;
-            localStorage.setItem(MUTE_KEY, "0");
+      fireCount.textContent = data.counts?.fire ?? 0;
+      nahCount.textContent  = data.counts?.nah  ?? 0;
+
+      const votedLocal = localStorage.getItem(votedKey(currentVideoId));
+      const voted = data.voted || votedLocal;
+
+      if (voted){
+        fireBtn.disabled = true;
+        nahBtn.disabled = true;
+        rxNote.textContent = "voted";
+      } else {
+        fireBtn.disabled = false;
+        nahBtn.disabled = false;
+        rxNote.textContent = "Vote once per video";
+      }
+    }catch(e){}
+  }
+
+  async function vote(reaction){
+    if (!currentVideoId) return;
+    if (localStorage.getItem(votedKey(currentVideoId))) return;
+
+    try{
+      const res = await fetch(REACT_VOTE_URL, {
+        method:"POST",
+        headers: {
+          "Content-Type":"application/json",
+          "X-CSRFToken": CSRF_TOKEN
+        },
+        body: JSON.stringify({ video_id: currentVideoId, reaction, client_id: CLIENT_ID })
+      });
+      const data = await res.json();
+      if (!data.ok && !data.already_voted) return;
+
+      localStorage.setItem(votedKey(currentVideoId), reaction);
+      bubble(reaction === "fire" ? "🔥" : "🚫");
+      await refreshReactions();
+    }catch(e){}
+  }
+
+  fireBtn.addEventListener("click", () => vote("fire"));
+  nahBtn.addEventListener("click", () => vote("nah"));
+  setInterval(refreshReactions, 2500);
+
+  // ---------- duration repair ----------
+  async function trySaveDuration(videoId){
+    if (!videoId) return;
+    const d = Number(videoEl.duration || 0);
+    if (!d || d < 2) return;
+
+    const dur = Math.floor(d);
+    const key = `fs_saved_dur_${videoId}_${dur}`;
+    if (localStorage.getItem(key)) return;
+
+    try{
+      await fetch(DURATION_SAVE_URL(videoId), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": CSRF_TOKEN
+        },
+        body: JSON.stringify({ duration_seconds: dur })
+      });
+      localStorage.setItem(key, "1");
+    }catch(e){}
+  }
+
+  // ---------- HLS / source handling ----------
+  let hls = null;
+  let currentSrc = null;
+  let currentIsHls = false;
+
+  // MP4 should NOT locally loop (prevents end replay glitch)
+  let mp4Ended = false;
+
+  function destroyHls(){
+    if (hls) { hls.destroy(); hls = null; }
+  }
+
+  function pickBestLevel(levels){
+    // Choose highest height; tie-break by bitrate
+    let bestIdx = 0;
+    for (let i = 0; i < levels.length; i++){
+      const a = levels[i];
+      const b = levels[bestIdx];
+      const ah = a?.height || 0;
+      const bh = b?.height || 0;
+      if (ah > bh) bestIdx = i;
+      else if (ah === bh && (a?.bitrate || 0) > (b?.bitrate || 0)) bestIdx = i;
+    }
+    return bestIdx;
+  }
+
+  function attachSource(url, isHls){
+    destroyHls();
+    mp4Ended = false;
+
+    currentIsHls = !!isHls;
+
+    // hard rule: never loop MP4 locally
+    videoEl.loop = false;
+
+    if (isHls) {
+      if (videoEl.canPlayType("application/vnd.apple.mpegurl")) {
+        // Safari native HLS (ABR controlled by browser)
+        videoEl.src = url;
+        setQuality("Quality: HLS (Safari auto)");
+      } else if (window.Hls) {
+        hls = new Hls({
+          enableWorker: true,
+
+          // IMPORTANT: do NOT cap to player size (keeps 1080 if available)
+          capLevelToPlayerSize: false,
+
+          // buffer a bit more smoothly
+          maxBufferLength: 45,
+          backBufferLength: 30,
+        });
+
+        hls.loadSource(url);
+        hls.attachMedia(videoEl);
+
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          const levels = hls.levels || [];
+          if (!levels.length) {
+            setQuality("Quality: HLS");
+            return;
           }
+
+          const best = pickBestLevel(levels);
+
+          // lock to best
+          hls.currentLevel = best;
+          hls.loadLevel = best;
+
+          const L = levels[best];
+          const label = L?.height ? `${L.height}p` : `L${best}`;
+          setQuality(`Quality: ${label} (locked)`);
+        });
+
+        hls.on(Hls.Events.LEVEL_SWITCHED, (_, data) => {
+          const idx = data?.level;
+          const L = hls?.levels?.[idx];
+          const label = L?.height ? `${L.height}p` : `L${idx}`;
+          setQuality(`Quality: ${label}`);
+        });
+
+      } else {
+        videoEl.src = "";
+        setQuality("Quality: HLS unsupported");
+      }
+    } else {
+      videoEl.src = url;
+      videoEl.addEventListener("loadedmetadata", () => {
+        const h = videoEl.videoHeight || 0;
+        setQuality(h ? `Quality: ${h}p (MP4)` : "Quality: MP4");
+      }, { once:true });
+    }
+  }
+
+  // If MP4 ends, we do NOT loop.
+  // We pause and wait for scheduler to move to next content.
+  videoEl.addEventListener("ended", () => {
+    if (!currentIsHls) {
+      mp4Ended = true;
+      try { videoEl.pause(); } catch(e) {}
+    }
+  });
+
+  // ---------- NOW sync (NO rewind) ----------
+  async function fetchNow(){
+    const res = await fetch(NOW_URL, { cache:"no-store" });
+    if (!res.ok) throw new Error(`now.json ${res.status}`);
+    return await res.json();
+  }
+
+  async function syncNow(){
+    const data = await fetchNow();
+    const item = data?.item;
+    if (!item?.play_url) return;
+
+    const nextSrc = String(item.play_url);
+    const nextIsHls = !!item.is_hls;
+    const nextId = String(item.video_id || "");
+    const offset = Number(data.offset_seconds || 0);
+
+    // update viewers (backend returns REAL count, we add base)
+    const viewersReal = Number(data.viewers || 0) || 0;
+    viewerCountEl.textContent = String(VIEW_BASE + viewersReal);
+
+    // set current video id for reactions
+    currentVideoId = nextId;
+
+    // source change
+    if (nextSrc !== currentSrc) {
+      currentSrc = nextSrc;
+      currentIsHls = nextIsHls;
+
+      attachSource(nextSrc, nextIsHls);
+
+      videoEl.addEventListener("loadedmetadata", async () => {
+        trySaveDuration(nextId);
+
+        // seek to station offset ONCE when MP4 loads
+        if (!nextIsHls) {
+          const dur = Number(videoEl.duration || 0);
+          const safe = (dur > 1) ? clamp(Math.floor(offset), 0, Math.max(0, Math.floor(dur) - 1)) : Math.floor(offset);
+          try { videoEl.currentTime = safe; } catch(e) {}
         }
 
-        setMuteIcon();
-      });
-    }
+        try { await videoEl.play(); } catch(e) {}
+        refreshReactions();
+      }, { once:true });
 
-    if (muteBtn) {
-      muteBtn.addEventListener("click", () => {
-        if (!isOverlayAccepted()) return;
-        video.muted = !video.muted;
-        localStorage.setItem(MUTE_KEY, video.muted ? "1" : "0");
-        setMuteIcon();
-      });
-    }
-
-    video.addEventListener("volumechange", setMuteIcon);
-
-    applySavedVolume();
-  }
-
-  // -------------------------
-  // Live TV core
-  // -------------------------
-  async function applyNow(data) {
-    if (!data || !data.ok) return;
-
-    setViewers(Number(data.viewers || 1));
-
-    const playUrl = data.play_url || null;
-    const title = data.title || "";
-    const startEpoch = Number(data.start_epoch || 0);
-    const offsetSeconds = Math.max(0, Number(data.offset_seconds || 0));
-
-    updateBaseClockFromServer(offsetSeconds);
-
-    const urlChanged = playUrl && playUrl !== lastPlayUrl;
-    const programChanged = startEpoch && startEpoch !== lastStartEpoch;
-
-    if (urlChanged || programChanged) {
-      lastPlayUrl = playUrl;
-      lastStartEpoch = startEpoch || 0;
-
-      showBanner(title, `${playUrl}|${startEpoch}`);
-      showAd(`${playUrl}|${startEpoch}`);
-
-      if (!playUrl) return;
-
-      video.src = playUrl;
-      video.load();
-
-      video.onloadedmetadata = () => {
-        const target = desiredLiveTime();
-        const dur = durationSafe();
-        const safeTarget = (dur > 0.5) ? clamp(target, 0, Math.max(0, dur - 0.25)) : target;
-
-        allowProgrammaticSeek(800, () => {
-          video.currentTime = safeTarget;
-        });
-
-        video.playbackRate = 1.0;
-        safePlay();
-      };
-
+      try { await videoEl.play(); } catch(e) {}
       return;
     }
 
-    if (video.readyState < 2) {
-      safePlay();
-      return;
-    }
+    // same source: only correct if we're BEHIND (never rewind)
+    if (!currentIsHls) {
+      if (!videoEl.seeking) {
+        const ct = Number(videoEl.currentTime || 0);
+        const behind = offset - ct;
 
-    // Keep running even if overlay blocks audio
-    if (!isOverlayAccepted()) {
-      video.muted = true;
-      video.volume = 0.0;
-      setMuteIcon();
-    }
+        // If video ended locally but scheduler still says same src,
+        // kick it back to the station offset and play.
+        if (mp4Ended) {
+          mp4Ended = false;
+          try { videoEl.currentTime = Math.max(0, Math.floor(offset)); } catch(e) {}
+          try { await videoEl.play(); } catch(e) {}
+          return;
+        }
 
-    const want = desiredLiveTime();
-    const actual = currentTimeSafe();
-    const drift = want - actual;
+        // If we're within tolerance, do nothing
+        if (Math.abs(behind) <= DRIFT_OK_SEC) return;
 
-    if (!Number.isFinite(drift)) return;
+        // If we're behind a lot, jump forward.
+        if (behind > SEEK_FORWARD_IF_BEHIND_SEC) {
+          try { videoEl.currentTime = Math.max(0, Math.floor(offset)); } catch(e) {}
+          return;
+        }
 
-    if (video.paused) safePlay();
-
-    if (Math.abs(drift) > HARD_SEEK_DRIFT) {
-      const dur = durationSafe();
-      const safeTarget = (dur > 0.5) ? clamp(want, 0, Math.max(0, dur - 0.25)) : want;
-
-      allowProgrammaticSeek(800, () => {
-        video.currentTime = safeTarget;
-      });
-
-      video.playbackRate = 1.0;
-      safePlay();
-      return;
-    }
-
-    if (Math.abs(drift) > SOFT_DRIFT) {
-      const rate = 1.0 + (drift > 0 ? SOFT_RATE : -SOFT_RATE);
-      setSoftPlaybackRate(rate);
-    } else {
-      video.playbackRate = 1.0;
-    }
-  }
-
-  // -------------------------
-  // Poll + presence ping
-  // -------------------------
-  async function pollNow() {
-    try {
-      const res = await fetch(NOW_URL, { cache: "no-store" });
-      const data = await res.json();
-      await applyNow(data);
-    } catch (_) {}
-  }
-
-  async function pingPresence() {
-    try {
-      await fetch(`${PING_URL}?sid=${encodeURIComponent(sid)}&channel=${encodeURIComponent(CHANNEL)}`, {
-        cache: "no-store",
-      });
-    } catch (_) {}
-  }
-
-  // -------------------------
-  // Lock down controls (LIVE TV)
-  // -------------------------
-  function lockDownVideo() {
-    video.controls = false;
-
-    video.addEventListener("pause", () => {
-      safePlay();
-    });
-
-    video.addEventListener("seeking", () => {
-      if (Date.now() < allowSeekUntilMs) return;
-
-      if (video.readyState >= 2 && baseSet) {
-        const want = desiredLiveTime();
-        const dur = durationSafe();
-        const safeTarget = (dur > 0.5) ? clamp(want, 0, Math.max(0, dur - 0.25)) : want;
-
-        allowProgrammaticSeek(800, () => {
-          video.currentTime = safeTarget;
-        });
+        // If we're slightly behind, do NOTHING (no micro-seeks).
+        // This prevents “restarting after a few seconds”.
       }
-    });
-
-    window.addEventListener("keydown", (e) => {
-      const keys = ["ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"];
-      if (keys.includes(e.key)) e.preventDefault();
-    }, { passive: false });
-  }
-
-  // -------------------------
-  // Overlay
-  // -------------------------
-  function initOverlay() {
-    if (!overlay || !overlayBtn || !overlayCheck) return;
-
-    overlayBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      if (overlayBtn.disabled) return;
-
-      sessionStorage.setItem("freestyle_entered", "1");
-      hide(overlay);
-
-      // unlock audio now that user interacted
-      video.muted = false;
-
-      // apply saved volume now
-      applySavedVolume();
-      safePlay();
-    });
-
-    overlayCheck.addEventListener("change", () => {
-      const ok = overlayCheck.checked;
-      overlayBtn.disabled = !ok;
-      overlayBtn.classList.toggle("is-disabled", !ok);
-    });
-
-    showOverlayIfNeeded();
-  }
-
-  // -------------------------
-  // Chat open/close
-  // -------------------------
-  function setChatOpen(open) {
-    if (!chatPanel || !chatOpenBtn) return;
-    if (open) {
-      show(chatPanel);
-      hide(chatOpenBtn);
-      localStorage.setItem("freestyle_chat_open", "1");
-    } else {
-      hide(chatPanel);
-      show(chatOpenBtn);
-      localStorage.setItem("freestyle_chat_open", "0");
     }
   }
 
-  function initChat() {
-    if (!chatPanel || !chatOpenBtn || !chatCloseBtn) return;
-    chatCloseBtn.addEventListener("click", () => setChatOpen(false));
-    chatOpenBtn.addEventListener("click", () => setChatOpen(true));
-    const saved = localStorage.getItem("freestyle_chat_open");
-    setChatOpen(saved !== "0");
+  // ---------- Chat ----------
+  let lastChatId = 0;
+
+  function appendMsg(m){
+    const div = document.createElement("div");
+    div.className = "msg";
+    div.innerHTML = `<span class="u">${escapeHtml(m.username)}</span><span class="t">${escapeHtml(m.message)}</span>`;
+    chatList.appendChild(div);
+    chatList.scrollTop = chatList.scrollHeight;
   }
 
-  function initAdClose() {
-    if (!adClose || !adBar) return;
-    adClose.addEventListener("click", () => hide(adBar));
+  async function pollChat(){
+    try{
+      const res = await fetch(CHAT_POLL_URL(lastChatId), { cache:"no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      const items = Array.isArray(data.items) ? data.items : [];
+      for (const m of items){
+        lastChatId = Math.max(lastChatId, m.id || 0);
+        appendMsg(m);
+      }
+    }catch(e){}
   }
 
-  // -------------------------
-  // Debug
-  // -------------------------
-  function attachDebug() {
-    video.addEventListener("error", () => {
-      console.error("VIDEO ERROR", video.error, "src:", video.currentSrc || video.src);
-    });
+  async function sendChat(){
+    const msg = (chatInput.value || "").trim();
+    if (!msg) return;
+    chatInput.value = "";
+    try{
+      await fetch(CHAT_SEND_URL, {
+        method:"POST",
+        headers: { "Content-Type":"application/json", "X-CSRFToken": CSRF_TOKEN },
+        body: JSON.stringify({ username: GUEST, message: msg })
+      });
+    }catch(e){}
   }
 
-  // -------------------------
-  // Start
-  // -------------------------
-  function start() {
-    // ✅ STEP 1 FIX: FORCE overlay to show every refresh
-    sessionStorage.removeItem("freestyle_entered");
+  sendBtn.addEventListener("click", sendChat);
+  chatInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendChat(); });
 
-    lockDownVideo();
-    initOverlay();
-    initChat();
-    initAdClose();
-    initVolumeUI();
-    attachDebug();
+  // ---------- Presence ----------
+  async function pingPresence(){
+    try{
+      await fetch(`${PRESENCE_URL}?sid=${encodeURIComponent(SID)}&channel=${encodeURIComponent(CHANNEL)}`, { cache:"no-store" });
+    }catch(e){}
+  }
 
-    // Default muted until user clicks enter
-    if (!isOverlayAccepted()) {
-      video.muted = true;
-      video.volume = 0.0;
-      setMuteIcon();
+  // resync when tab returns
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      syncNow().catch(()=>{});
+      videoEl.play().catch(()=>{});
     }
+  });
 
-    pollNow();
-    pingPresence();
+  // ---------- start ----------
+  syncNow().catch(()=>{});
+  pollChat().catch(()=>{});
+  pingPresence().catch(()=>{});
 
-    setInterval(pollNow, POLL_MS);
-    setInterval(pingPresence, 15000);
-  }
+  setInterval(() => syncNow().catch(()=>{}), POLL_MS);
+  setInterval(() => pollChat().catch(()=>{}), CHAT_POLL_MS);
+  setInterval(() => pingPresence().catch(()=>{}), PRESENCE_MS);
 
-  document.addEventListener("DOMContentLoaded", start);
 })();

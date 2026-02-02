@@ -31,7 +31,7 @@ def split_csv(value) -> list[str]:
 # Core
 # -------------------------
 SECRET_KEY = env("SECRET_KEY", "dev-only-change-me")
-DEBUG = env_bool("DEBUG", "0")
+DEBUG = env_bool("DEBUG", "1")  # dev default ON; set DEBUG=0 in prod
 
 ALLOWED_HOSTS = split_csv(env("ALLOWED_HOSTS", "127.0.0.1,localhost"))
 
@@ -39,7 +39,7 @@ render_host = (env("RENDER_EXTERNAL_HOSTNAME") or "").strip()
 if render_host and render_host not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append(render_host)
 
-# Allow Render internal/healthcheck hostnames
+# allow Render wildcard hostnames
 if ".onrender.com" not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append(".onrender.com")
 
@@ -55,8 +55,6 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "freestyle",
-    # only include tvapi if you use it
-    # "tvapi",
 ]
 
 
@@ -73,7 +71,6 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
-
 
 ROOT_URLCONF = "config.urls"
 
@@ -103,7 +100,6 @@ WSGI_APPLICATION = "config.wsgi.application"
 # -------------------------
 # Database
 # -------------------------
-# Local fallback
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
@@ -111,13 +107,12 @@ DATABASES = {
     }
 }
 
-# Render Postgres
 database_url = env("DATABASE_URL")
 if database_url:
     DATABASES["default"] = dj_database_url.parse(
         database_url,
         conn_max_age=600,
-        ssl_require=False,  # Render internal network is fine; keep False to avoid SSL mismatch errors
+        ssl_require=False,
     )
 
 
@@ -136,7 +131,7 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # -------------------------
 LANGUAGE_CODE = "en-us"
-TIME_ZONE = "UTC"
+TIME_ZONE = env("TIME_ZONE", "UTC")
 USE_I18N = True
 USE_TZ = True
 
@@ -162,7 +157,15 @@ MEDIA_ROOT = Path(env("MEDIA_ROOT", str(BASE_DIR / "media")))
 
 
 # -------------------------
-# CSRF / proxy
+# Auth
+# -------------------------
+LOGIN_URL = "/freestyle/access/?next=/freestyle/creator/"
+LOGIN_REDIRECT_URL = "/"
+LOGOUT_REDIRECT_URL = "/"
+
+
+# -------------------------
+# CSRF / proxy / cookies
 # -------------------------
 csrf_env = env("CSRF_TRUSTED_ORIGINS")
 if csrf_env:
@@ -176,6 +179,10 @@ else:
     ]
     if render_host:
         CSRF_TRUSTED_ORIGINS.append(f"https://{render_host}")
+
+# sensible defaults
+CSRF_COOKIE_SAMESITE = "Lax"
+SESSION_COOKIE_SAMESITE = "Lax"
 
 if not DEBUG:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")

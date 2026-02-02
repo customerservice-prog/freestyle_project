@@ -2,15 +2,16 @@
 from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
-from django.conf.urls.static import static
+
+from freestyle.media_serve import media_serve
 
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("", include("freestyle.urls")),
-    path("api/freestyle/", include("freestyle.api_urls")),
 ]
 
+# DEV: Range-enabled media serving (fixes video playback reliability)
 if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
-    # optional but helpful locally:
-    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+    urlpatterns += [
+        path("media/<path:path>", media_serve),
+    ]
