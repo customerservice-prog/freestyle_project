@@ -1,5 +1,7 @@
+# config/settings.py
 from pathlib import Path
 import os
+import sys
 import dj_database_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -9,10 +11,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Helpers
 # -------------------------
 def env(name: str, default=None):
-    """
-    Supports NAME or DJANGO_NAME.
-    Example: SECRET_KEY or DJANGO_SECRET_KEY
-    """
+    """Supports NAME or DJANGO_NAME."""
     return os.environ.get(name, os.environ.get(f"DJANGO_{name}", default))
 
 
@@ -32,21 +31,29 @@ def split_csv(value) -> list[str]:
 SECRET_KEY = env("SECRET_KEY", "dev-only-change-me")
 DEBUG = env_bool("DEBUG", "0")
 
-# Hosts
+# Detect tests (so Client() host 'testserver' doesn't blow up)
+RUNNING_TESTS = ("test" in sys.argv) or ("pytest" in sys.modules)
+
 ALLOWED_HOSTS = split_csv(env("ALLOWED_HOSTS", "127.0.0.1,localhost"))
 
-# Django test client uses Host: testserver (only allow in DEBUG)
-if DEBUG and "testserver" not in ALLOWED_HOSTS:
-    ALLOWED_HOSTS.append("testserver")
+# Always allow testserver in DEBUG/tests (so your shell Client() works without SERVER_NAME)
+if DEBUG or RUNNING_TESTS:
+    if "testserver" not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append("testserver")
 
-# Render external hostname (auto-added on Render)
+# Render hostname
 render_host = (env("RENDER_EXTERNAL_HOSTNAME") or "").strip()
 if render_host and render_host not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append(render_host)
 
-# allow all onrender.com subdomains (healthchecks / internal)
+# allow onrender.com subdomains (healthchecks/internal)
 if ".onrender.com" not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append(".onrender.com")
+
+# Your real domain(s)
+for host in ["bars24seven.com", "www.bars24seven.com"]:
+    if host not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(host)
 
 
 # -------------------------
@@ -158,13 +165,11 @@ STORAGES = {
 # Media (uploads)
 # -------------------------
 MEDIA_URL = env("MEDIA_URL", "/media/")
-
-# Local dev default: ./media
-# Render disk default: /var/data/media (ONLY if you set MEDIA_ROOT or DJANGO_MEDIA_ROOT on Render)
 MEDIA_ROOT = Path(env("MEDIA_ROOT", str(BASE_DIR / "media")))
 
-# Serve media via Django only when enabled (dev yes, prod only if you choose)
-SERVE_MEDIA = env_bool("SERVE_MEDIA", "1" if DEBUG else "1")
+# Only serve media from Django if explicitly enabled
+# On Render with a persistent disk, you likely want SERVE_MEDIA=1
+SERVE_MEDIA = env_bool("SERVE_MEDIA", "1" if DEBUG else "0")
 
 
 # -------------------------
@@ -179,6 +184,8 @@ else:
         "http://localhost:8000",
         "http://127.0.0.1:8001",
         "http://localhost:8001",
+        "https://bars24seven.com",
+        "https://www.bars24seven.com",
     ]
     if render_host:
         CSRF_TRUSTED_ORIGINS.append(f"https://{render_host}")

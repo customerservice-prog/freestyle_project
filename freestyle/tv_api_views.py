@@ -1,10 +1,9 @@
 # freestyle/tv_api_views.py
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional, List, Tuple
+from datetime import timedelta
 
-from django.http import JsonResponse, HttpRequest
+from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.http import require_GET
 
@@ -14,235 +13,216 @@ from .models import Channel, ChannelEntry, ChatMessage, Presence, SponsorAd
 # -------------------------
 # Helpers
 # -------------------------
-def _get_channel_slug(request: HttpRequest, channel: Optional[str] = None) -> str:
-    """
-    Figure out which channel to use.
-    Supports:
-      - URL kwarg: /api/freestyle/channel/<slug>/now.json
-      - querystring: ?channel=main
-    Defaults to "main".
-    """
-    slug = (channel or "").strip().lower()
-    if not slug:
-        slug = (request.GET.get("channel") or request.GET.get("c") or "main").strip().lower()
-    return slug or "main"
+
+PRESENCE_TTL_SECONDS = 90  # viewers considered "watching" if pinged recently
 
 
-def _active_entries_for_channel(channel_obj: Channel) -> List[ChannelEntry]:
-    # Order matches ChannelEntry.Meta ordering: sort_order, id
-    return list(
-        ChannelEntry.objects.select_related("video")
-        .filter(channel=channel_obj, is_active=True)
-        .order_by("sort_order", "id")
-    )
+def _get_channel(request, channel_slug: str | None = None) -> Channel | None:
+    """
+    Resolve channel by:
+      1) URL kwarg channel_slug (api route)
+      2) ?channel=main querystring
+      3) Channel.is_default
+      4) first Channel
+    """
+    slug = (channel_slug or "").strip() or (request.GET.get("channel") or "").strip()
+    if slug:
+        ch = Channel.objects.filter(slug=slug).first()
+        if ch:
+            return ch
+
+    ch = Channel.objects.filter(is_default=True).first()
+    if ch:
+        return ch
+
+    return Channel.objects.first()
 
 
-def _video_payload(video) -> dict:
+def _prune_presence(channel_obj: Channel) -> int:
+    cutoff = timezone.now() - timedelta(seconds=PRESENCE_TTL_SECONDS)
+    Presence.objects.filter(channel=channel_obj, last_seen__lt=cutoff).delete()
+    return Presence.objects.filter(channel=channel_obj).count()
+
+
+def _video_payload(v) -> dict:
     """
-    Return a payload the TV page can use.
-    We include both:
-      - play_url (what the player should load)
-      - storage_name (path-ish, useful for debugging)
+    IMPORTANT: Use play_url that points to /media/... (or HLS)
+    We include a few alias keys so whatever JS you have will work.
     """
-    play_url = ""
+    play_url = getattr(v, "play_url", "") or ""
     storage_name = ""
 
-    # Prefer stored play_url if present (your model populates it on save)
-    if getattr(video, "play_url", ""):
-        play_url = video.play_url or ""
-
-    # If video_file exists, use its .name as storage_name
-    vf = getattr(video, "video_file", None)
-    if vf is not None:
-        try:
-            storage_name = vf.name or ""
-        except Exception:
-            storage_name = ""
-
-        # If play_url missing but file exists, fall back to .url
-        if not play_url:
-            try:
-                play_url = vf.url
-            except Exception:
-                play_url = ""
+    # If you have a FileField (video_file) we expose its name too
+    video_file = getattr(v, "video_file", None)
+    if video_file and getattr(video_file, "name", None):
+        storage_name = video_file.name
 
     return {
-        "id": video.id,
-        "title": getattr(video, "title", "") or "",
-        "duration_seconds": int(getattr(video, "duration_seconds", 0) or 0),
-        "is_hls": bool(getattr(video, "is_hls", False)),
+        "id": v.id,
+        "title": getattr(v, "title", "") or "",
+        "duration_seconds": int(getattr(v, "duration_seconds", 0) or 0),
+        "is_hls": bool(getattr(v, "is_hls", False)),
         "storage_name": storage_name,
         "play_url": play_url,
-        "artwork_url": getattr(video, "artwork_url", "") or "",
+
+        # Back-compat aliases some frontends expect:
+        "src": play_url,
+        "url": play_url,
     }
 
 
-def _current_sponsor_payload() -> Optional[dict]:
-    ad = SponsorAd.objects.filter(is_active=True).order_by("-id").first()
-    if not ad:
-        return None
-    return {
-        "title": ad.title,
-        "description": ad.description,
-        "image_url": ad.image_url,
-        "click_url": ad.click_url,
-    }
-
-
-def _viewers_count(channel_obj: Channel, seconds_window: int = 60) -> int:
+def _pick_now_from_entries(channel_obj: Channel):
     """
-    Count presences seen recently (simple "watching" metric).
+    Build the channel playlist from active entries and pick the
+    currently-playing video based on Channel.schedule_started_at.
+
+    Returns: (current_video_or_None, seconds_into_current, playlist_video_ids, station_offset_seconds)
     """
-    cutoff = timezone.now() - timezone.timedelta(seconds=seconds_window)
-    return Presence.objects.filter(channel=channel_obj, last_seen__gte=cutoff).count()
-
-
-@dataclass
-class PickResult:
-    current_entry: Optional[ChannelEntry]
-    seconds_into: int
-    station_offset_seconds: int
-    playlist_ids: List[int]
-
-
-def _pick_now_from_rotation(channel_obj: Channel, entries: List[ChannelEntry]) -> PickResult:
-    """
-    Uses Channel.schedule_started_at as the station clock anchor so refresh doesn't restart.
-    Rotates through entries based on each video's duration_seconds.
-    """
-    playlist_ids = [e.video_id for e in entries]
-
+    qs = (
+        ChannelEntry.objects.filter(channel=channel_obj, is_active=True)
+        .select_related("video")
+        .order_by("sort_order", "id")
+    )
+    entries = list(qs)
     if not entries:
-        return PickResult(None, 0, 0, playlist_ids)
+        return None, 0, [], 0
 
-    # If any entry is explicitly live, prefer the first live entry
-    for e in entries:
-        if e.is_live:
-            return PickResult(e, 0, 0, playlist_ids)
+    videos = [e.video for e in entries]
+    durations = [int(getattr(v, "duration_seconds", 0) or 0) for v in videos]
 
-    durations = [int(getattr(e.video, "duration_seconds", 0) or 0) for e in entries]
+    # If durations are missing, we still return the first item with offset 0
     total = sum(d for d in durations if d > 0)
-
-    # How long since station started
-    station_elapsed = int((timezone.now() - channel_obj.schedule_started_at).total_seconds())
-    if station_elapsed < 0:
-        station_elapsed = 0
-
-    # If total duration is 0, just pick the first entry
     if total <= 0:
-        return PickResult(entries[0], 0, station_elapsed, playlist_ids)
+        return videos[0], 0, [v.id for v in videos], 0
 
-    station_offset = station_elapsed % total
+    anchor = getattr(channel_obj, "schedule_started_at", None) or timezone.now()
+    station_offset = int((timezone.now() - anchor).total_seconds()) % total
 
-    # Walk the playlist to find the current entry and offset into it
-    cursor = 0
-    for e, d in zip(entries, durations):
-        d = max(int(d or 0), 0)
+    # Walk the rotation to find the current video
+    acc = 0
+    for v, d in zip(videos, durations):
+        d = max(0, int(d))
         if d <= 0:
             continue
-
-        if station_offset < cursor + d:
-            seconds_into = station_offset - cursor
-            # safety clamp
-            if seconds_into < 0:
-                seconds_into = 0
-            if seconds_into >= d:
-                seconds_into = d - 1
-            return PickResult(e, int(seconds_into), int(station_offset), playlist_ids)
-
-        cursor += d
+        if station_offset < acc + d:
+            seconds_into = station_offset - acc
+            return v, seconds_into, [vv.id for vv in videos], station_offset
+        acc += d
 
     # Fallback (shouldn't happen)
-    return PickResult(entries[0], 0, station_offset, playlist_ids)
+    return videos[0], 0, [v.id for v in videos], station_offset
 
 
 # -------------------------
 # Endpoints
 # -------------------------
+
 @require_GET
-def now_json(request: HttpRequest, channel: Optional[str] = None):
-    slug = _get_channel_slug(request, channel)
+def now_json(request, channel: str | None = None):
+    """
+    Works for BOTH:
+      /now.json
+      /api/freestyle/channel/<channel>/now.json
 
-    # Ensure a Channel exists
-    ch, _created = Channel.objects.get_or_create(
-        slug=slug,
-        defaults={
-            "name": slug.title(),
-            "is_default": (slug == "main"),
-            "schedule_started_at": timezone.now(),
-        },
-    )
+    Returns keys: now + (aliases item/current), offset_seconds, station_offset_seconds
+    """
+    ch = _get_channel(request, channel_slug=channel)
+    if not ch:
+        return JsonResponse({"ok": True, "now": None, "item": None, "current": None, "offset_seconds": 0})
 
-    entries = _active_entries_for_channel(ch)
-    pick = _pick_now_from_rotation(ch, entries)
+    current, seconds_into, playlist_ids, station_offset = _pick_now_from_entries(ch)
+    viewers = _prune_presence(ch)
 
-    sponsor = _current_sponsor_payload()
-    viewers = _viewers_count(ch)
+    sponsor = SponsorAd.objects.filter(is_active=True).order_by("-id").first()
+    sponsor_payload = None
+    if sponsor:
+        sponsor_payload = {
+            "title": sponsor.title,
+            "description": sponsor.description,
+            "image_url": sponsor.image_url,
+            "click_url": sponsor.click_url,
+        }
 
-    payload_now = None
-    if pick.current_entry:
-        payload_now = _video_payload(pick.current_entry.video)
+    if not current:
+        return JsonResponse(
+            {
+                "ok": True,
+                "channel": ch.slug,
+                "offset_seconds": 0,
+                "station_offset_seconds": 0,
+                "viewers": viewers,
+                "sponsor": sponsor_payload,
+                "playlist": playlist_ids,
+                "now": None,
+                "item": None,
+                "current": None,
+            }
+        )
 
-    # ✅ Return BOTH old + new schema keys (fixes black screen when JS expects item/current)
+    payload = _video_payload(current)
+
+    # Make sure offset_seconds is always valid for the current item if duration exists
+    dur = int(payload.get("duration_seconds") or 0)
+    if dur > 0:
+        seconds_into = int(seconds_into) % dur
+    else:
+        seconds_into = 0
+
     return JsonResponse(
         {
             "ok": True,
-            "channel": slug,
-            "offset_seconds": int(pick.seconds_into),
-            "station_offset_seconds": int(pick.station_offset_seconds),
+            "channel": ch.slug,
+            "offset_seconds": int(seconds_into),
+            "station_offset_seconds": int(station_offset),
             "viewers": viewers,
-            "sponsor": sponsor,
-            "playlist": pick.playlist_ids,
-            "now": payload_now,       # new-ish schema
-            "item": payload_now,      # older schema many frontends use
-            "current": payload_now,   # extra compatibility
+            "sponsor": sponsor_payload,
+            "playlist": playlist_ids,
+
+            # Primary key the TV should use:
+            "now": payload,
+
+            # Compatibility aliases (some JS expects item/current):
+            "item": payload,
+            "current": payload,
         }
     )
 
 
 @require_GET
-def messages_json(request: HttpRequest):
-    slug = _get_channel_slug(request)
-    ch, _ = Channel.objects.get_or_create(
-        slug=slug,
-        defaults={
-            "name": slug.title(),
-            "is_default": (slug == "main"),
-            "schedule_started_at": timezone.now(),
-        },
-    )
+def messages_json(request, channel: str | None = None):
+    """
+    /messages.json?after_id=0&channel=main
+    """
+    ch = _get_channel(request, channel_slug=channel)
+    if not ch:
+        return JsonResponse({"ok": True, "messages": []})
 
     try:
         after_id = int(request.GET.get("after_id", "0") or 0)
-    except Exception:
+    except ValueError:
         after_id = 0
 
-    qs = ChatMessage.objects.filter(channel=ch, id__gt=after_id).order_by("id")[:100]
-    messages = []
-    for m in qs:
-        messages.append(
-            {
-                "id": m.id,
-                "username": m.username,
-                "message": m.message,
-                "created_at": m.created_at.isoformat(),
-            }
-        )
-
+    qs = ChatMessage.objects.filter(channel=ch, id__gt=after_id).order_by("id")[:200]
+    messages = [
+        {
+            "id": m.id,
+            "username": m.username,
+            "message": m.message,
+            "created_at": m.created_at.isoformat(),
+        }
+        for m in qs
+    ]
     return JsonResponse({"ok": True, "messages": messages})
 
 
 @require_GET
-def ping_json(request: HttpRequest):
-    slug = _get_channel_slug(request)
-    ch, _ = Channel.objects.get_or_create(
-        slug=slug,
-        defaults={
-            "name": slug.title(),
-            "is_default": (slug == "main"),
-            "schedule_started_at": timezone.now(),
-        },
-    )
+def ping_json(request, channel: str | None = None):
+    """
+    /ping.json?sid=<uuid>&channel=main
+    """
+    ch = _get_channel(request, channel_slug=channel)
+    if not ch:
+        return JsonResponse({"ok": True, "channel": None, "server_time": timezone.now().isoformat(), "watching": None})
 
     sid = (request.GET.get("sid") or "").strip()
     if sid:
@@ -252,10 +232,12 @@ def ping_json(request: HttpRequest):
             defaults={"last_seen": timezone.now()},
         )
 
+    _prune_presence(ch)
+
     return JsonResponse(
         {
             "ok": True,
-            "channel": slug,
+            "channel": ch.slug,
             "server_time": timezone.now().isoformat(),
             "watching": None,
         }

@@ -309,7 +309,9 @@
 
     const CHANNEL = (document.documentElement.dataset.channel || "main").trim();
 
+    // Keep using the API route (works on local + render)
     const NOW_URL = `/api/freestyle/channel/${encodeURIComponent(CHANNEL)}/now.json`;
+
     const CHAT_POLL_URL = (afterId) =>
       `/api/freestyle/channel/${encodeURIComponent(CHANNEL)}/chat/messages.json?after_id=${afterId||0}`;
     const CHAT_SEND_URL =
@@ -523,28 +525,6 @@
       syncNow().catch(()=>{});
     });
 
-    async function trySaveDuration(videoId){
-      if (!videoId) return;
-      const d = Number(videoEl.duration || 0);
-      if (!d || d < 2) return;
-
-      const dur = Math.floor(d);
-      const key = `fs_saved_dur_${videoId}_${dur}`;
-      if (localStorage.getItem(key)) return;
-
-      try{
-        await fetch(durationSaveUrl(videoId), {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-CSRFToken": CSRF_TOKEN
-          },
-          body: JSON.stringify({ duration_seconds: dur })
-        });
-        localStorage.setItem(key, "1");
-      }catch(e){}
-    }
-
     // ---------- reactions ----------
     function votedKey(videoId){ return `fs_voted_${videoId}`; }
 
@@ -618,22 +598,30 @@
       return await res.json();
     }
 
+    // ✅ FIXED: supports item.id (what your API returns), item.video_id (older), and falls back to src compare
     async function syncNow(){
       const data = await fetchNow();
-      const item = data?.item;
+
+      // be compatible with any key name
+      const item = data?.current || data?.item || data?.now;
       if (!item?.play_url) return;
 
       const nextSrc = String(item.play_url);
       const nextIsHls = !!item.is_hls;
-      const nextId = String(item.video_id || "");
-      const offset = Number(data.offset_seconds || 0);
 
-      const videoChanged = (nextId && nextId !== String(currentVideoId || ""));
+      // FIX: your tv_api_views returns "id" for the video
+      const nextId = String(item.id || item.video_id || "");
+
+      const videoChanged =
+        (nextId && nextId !== String(currentVideoId || "")) ||
+        (!nextId && nextSrc !== String(currentSrc || ""));
+
+      const offset = Number(data.offset_seconds || 0);
 
       if (videoChanged) {
         cleanSwap();
 
-        currentVideoId = nextId;
+        currentVideoId = nextId || null;
         currentSrc = nextSrc;
         currentIsHls = nextIsHls;
 
@@ -643,22 +631,25 @@
           videoEl.removeEventListener("loadedmetadata", onMeta);
           switching = false;
 
-          trySaveDuration(nextId);
-
+          // only seek for MP4
           if (!nextIsHls && offset > 0) {
             try { videoEl.currentTime = Math.max(0, Math.floor(offset)); } catch(e) {}
           }
 
           holdingEnded = false;
           try { await videoEl.play(); } catch(e) {}
+
           refreshReactions();
         };
 
         videoEl.addEventListener("loadedmetadata", onMeta);
+
+        // kick playback asap
         try { await videoEl.play(); } catch(e) {}
         return;
       }
 
+      // if same video, keep it in sync
       if (!currentIsHls && offset > 0 && !videoEl.seeking && !switching) {
         const ct = Number(videoEl.currentTime || 0);
         const behind = offset - ct;
