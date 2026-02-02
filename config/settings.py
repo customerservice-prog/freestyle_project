@@ -1,4 +1,3 @@
-# config/settings.py
 from pathlib import Path
 import os
 import dj_database_url
@@ -33,8 +32,14 @@ def split_csv(value) -> list[str]:
 SECRET_KEY = env("SECRET_KEY", "dev-only-change-me")
 DEBUG = env_bool("DEBUG", "0")
 
+# Hosts
 ALLOWED_HOSTS = split_csv(env("ALLOWED_HOSTS", "127.0.0.1,localhost"))
 
+# Django test client uses Host: testserver (only allow in DEBUG)
+if DEBUG and "testserver" not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append("testserver")
+
+# Render external hostname (auto-added on Render)
 render_host = (env("RENDER_EXTERNAL_HOSTNAME") or "").strip()
 if render_host and render_host not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append(render_host)
@@ -42,9 +47,6 @@ if render_host and render_host not in ALLOWED_HOSTS:
 # allow all onrender.com subdomains (healthchecks / internal)
 if ".onrender.com" not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append(".onrender.com")
-
-# Are we on Render?
-ON_RENDER = env_bool("RENDER", "0") or bool(render_host)
 
 
 # -------------------------
@@ -74,7 +76,6 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
-
 
 ROOT_URLCONF = "config.urls"
 
@@ -157,19 +158,13 @@ STORAGES = {
 # Media (uploads)
 # -------------------------
 MEDIA_URL = env("MEDIA_URL", "/media/")
-if not MEDIA_URL.endswith("/"):
-    MEDIA_URL += "/"
 
-# ✅ KEY FIX:
-# - Local default: ./media
-# - Render default: /var/data/media (or DJANGO_MEDIA_ROOT)
-if ON_RENDER:
-    MEDIA_ROOT = Path(env("MEDIA_ROOT", "/var/data/media"))
-else:
-    MEDIA_ROOT = BASE_DIR / "media"
+# Local dev default: ./media
+# Render disk default: /var/data/media (ONLY if you set MEDIA_ROOT or DJANGO_MEDIA_ROOT on Render)
+MEDIA_ROOT = Path(env("MEDIA_ROOT", str(BASE_DIR / "media")))
 
-# Serve /media/ via Django only when enabled (works on Render Disk)
-SERVE_MEDIA = env_bool("SERVE_MEDIA", "1" if (DEBUG or ON_RENDER) else "0")
+# Serve media via Django only when enabled (dev yes, prod only if you choose)
+SERVE_MEDIA = env_bool("SERVE_MEDIA", "1" if DEBUG else "1")
 
 
 # -------------------------
@@ -194,7 +189,6 @@ if not DEBUG:
     CSRF_COOKIE_SECURE = True
     SESSION_COOKIE_SECURE = True
     SECURE_SSL_REDIRECT = False  # Render terminates SSL
-
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
