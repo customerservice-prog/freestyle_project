@@ -43,6 +43,9 @@ if render_host and render_host not in ALLOWED_HOSTS:
 if ".onrender.com" not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append(".onrender.com")
 
+# Are we on Render?
+ON_RENDER = env_bool("RENDER", "0") or bool(render_host)
+
 
 # -------------------------
 # Applications
@@ -154,11 +157,19 @@ STORAGES = {
 # Media (uploads)
 # -------------------------
 MEDIA_URL = env("MEDIA_URL", "/media/")
-MEDIA_ROOT = Path(env("MEDIA_ROOT", "/var/data/media"))
+if not MEDIA_URL.endswith("/"):
+    MEDIA_URL += "/"
 
-# If you're using a Render Disk and want Django to serve /media/ through the app
-# (works for small/medium usage; best long-term is CDN)
-SERVE_MEDIA = env_bool("SERVE_MEDIA", "1" if DEBUG else "1")
+# ✅ KEY FIX:
+# - Local default: ./media
+# - Render default: /var/data/media (or DJANGO_MEDIA_ROOT)
+if ON_RENDER:
+    MEDIA_ROOT = Path(env("MEDIA_ROOT", "/var/data/media"))
+else:
+    MEDIA_ROOT = BASE_DIR / "media"
+
+# Serve /media/ via Django only when enabled (works on Render Disk)
+SERVE_MEDIA = env_bool("SERVE_MEDIA", "1" if (DEBUG or ON_RENDER) else "0")
 
 
 # -------------------------
@@ -183,6 +194,7 @@ if not DEBUG:
     CSRF_COOKIE_SECURE = True
     SESSION_COOKIE_SECURE = True
     SECURE_SSL_REDIRECT = False  # Render terminates SSL
+
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

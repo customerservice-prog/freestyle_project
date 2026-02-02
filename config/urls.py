@@ -10,22 +10,24 @@ from django.views.static import serve as static_serve
 urlpatterns = [
     path("admin/", admin.site.urls),
 
-    # Render health endpoint (does NOT depend on your TV page)
+    # Health endpoint (does NOT depend on your TV page)
     path("api/health/", lambda request: JsonResponse({"ok": True})),
 
-    # App serves TV page at "/" + your API routes
+    # App routes (TV page at "/" + API routes)
     path("", include("freestyle.urls")),
 ]
 
-# Serve uploads in DEV, and also on Render when SERVE_MEDIA=1
-if settings.DEBUG or getattr(settings, "SERVE_MEDIA", False):
-    # static() only works reliably in DEBUG; for production we also add explicit serve()
+# Serve uploads:
+# - In DEBUG: use static()
+# - In production: only if SERVE_MEDIA=1 (Render Disk)
+if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
-    # Production-safe media serving route (Render disk)
+if getattr(settings, "SERVE_MEDIA", False):
+    media_prefix = settings.MEDIA_URL.lstrip("/")  # "media/"
     urlpatterns += [
         path(
-            f"{settings.MEDIA_URL.lstrip('/')}" + "<path:path>",
+            f"{media_prefix}<path:path>",
             static_serve,
             {"document_root": settings.MEDIA_ROOT},
         )
