@@ -1,296 +1,202 @@
 # freestyle/tv_api_views.py
 from __future__ import annotations
 
-from typing import Any, Optional
+from datetime import timedelta
+from typing import Optional, Tuple
 
-from django.http import JsonResponse, HttpRequest
+from django.conf import settings
+from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.http import require_GET
-from django.db import transaction
-
-from .models import Channel, ChannelEntry, FreestyleVideo
-
-# These imports are optional depending on your models. We import safely.
-try:
-    from .models import ChatMessage  # type: ignore
-except Exception:
-    ChatMessage = None  # type: ignore
-
-try:
-    from .models import Presence  # type: ignore
-except Exception:
-    Presence = None  # type: ignore
 
 
-# -----------------------------
-# Helpers
-# -----------------------------
-def _iso(dt):
-    if not dt:
-        return None
+def _channel_slug(request, channel_kw: Optional[str] = None) -> str:
+    if channel_kw:
+        return str(channel_kw).strip() or "main"
+    return (request.GET.get("channel") or "main").strip() or "main"
+
+
+def _safe_int(v, default=0) -> int:
     try:
-        return dt.isoformat()
-    except Exception:
-        return None
-
-
-def _safe_int(val, default=0):
-    try:
-        return int(val)
+        return int(v)
     except Exception:
         return default
 
 
-def _get_channel_slug(request: HttpRequest, channel: Optional[str] = None) -> str:
-    # Priority: URL param -> querystring -> header -> default
-    return (
-        (channel or "").strip()
-        or (request.GET.get("channel") or "").strip()
-        or (request.headers.get("X-Channel") or "").strip()
-        or "main"
-    )
+def _media_join(storage_name: str) -> str:
+    base = (getattr(settings, "MEDIA_URL", "/media/") or "/media/").strip()
+    if not base.endswith("/"):
+        base += "/"
+    return base + storage_name.lstrip("/")
 
 
-def _get_channel(slug: str) -> Channel:
-    # Ensure channel exists
-    obj, _ = Channel.objects.get_or_create(slug=slug, defaults={"name": slug.title()})
-    return obj
-
-
-def _video_name_and_url(video: FreestyleVideo) -> tuple[Optional[str], Optional[str]]:
+def _extract_storage_and_url(video_obj) -> Tuple[Optional[str], Optional[str]]:
     """
-    Works whether video_file is FileField or null.
-    Returns (storage_name, absolute_media_url_relative).
+    Supports BOTH schema styles:
+    - Postgres "varchar" path: video.video_file == 'freestyle_videos/x.mp4'
+    - Django FileField: video.video_file.name + video.video_file.url
+    Also supports legacy field 'file' if it exists.
+    Also supports 'play_url' external URL if present.
     """
-    name = None
-    url = None
+    if not video_obj:
+        return None, None
 
-    vf = getattr(video, "video_file", None)
-    if vf:
-        # FileField -> FieldFile; printing shows name, .url builds MEDIA_URL path
-        try:
-            name = vf.name
-        except Exception:
-            name = None
-        try:
-            url = vf.url
-        except Exception:
-            url = None
+    play_url = getattr(video_obj, "play_url", None)
+    if isinstance(play_url, str) and play_url.strip():
+        return None, play_url.strip()
 
-    # Legacy fallback if you ever had 'file' in older schema
-    if not url:
-        f = getattr(video, "file", None)
-        if f:
-            try:
-                name = getattr(f, "name", None) or name
-            except Exception:
-                pass
-            try:
-                url = f.url
-            except Exception:
-                pass
+    vf = getattr(video_obj, "video_file", None)
 
-    # Another fallback: some old DBs store a plain string path
-    if not url and isinstance(vf, str) and vf.strip():
-        name = vf.strip()
-        url = "/media/" + name.lstrip("/")
+    # Production: video_file stored as string path
+    if isinstance(vf, str) and vf.strip():
+        storage = vf.strip()
+        return storage, _media_join(storage)
 
-    return name, url
+    # Dev/FileField: video_file is FieldFile
+    if vf is not None and hasattr(vf, "name"):
+        storage = getattr(vf, "name", None) or None
+        url = getattr(vf, "url", None) or None
+        if storage and url:
+            return storage, url
+        if storage:
+            return storage, _media_join(storage)
 
+    # Legacy fallback
+    legacy = getattr(video_obj, "file", None)
+    if isinstance(legacy, str) and legacy.strip():
+        storage = legacy.strip()
+        return storage, _media_join(storage)
+    if legacy is not None and hasattr(legacy, "name"):
+        storage = getattr(legacy, "name", None) or None
+        url = getattr(legacy, "url", None) or None
+        if storage and url:
+            return storage, url
+        if storage:
+            return storage, _media_join(storage)
 
-def _duration_seconds(video: FreestyleVideo) -> int:
-    d = getattr(video, "duration_seconds", None)
-    d = _safe_int(d, 0)
-    # If missing, assume 180 seconds so rotation still works
-    return d if d > 0 else 180
+    return None, None
 
 
-def _serialize_video(video: FreestyleVideo, seconds_into: int = 0) -> dict[str, Any]:
-    storage_name, media_url = _video_name_and_url(video)
+def _get_active_entry(channel_slug: str):
+    from .models import Channel, ChannelEntry
 
-    is_hls = bool(getattr(video, "is_hls", False))
-    play_url = getattr(video, "play_url", None)  # some schemas had this
-    if not play_url:
-        play_url = media_url
+    ch = Channel.objects.filter(slug=channel_slug).first()
+    if not ch:
+        return None
 
-    return {
-        "id": video.id,
-        "title": getattr(video, "title", "") or "",
-        "is_hls": is_hls,
-        "duration_seconds": _duration_seconds(video),
-        "seconds_into": max(0, _safe_int(seconds_into, 0)),
-        # URLs (redundant on purpose so your frontend can use any key it expects)
-        "play_url": play_url,
-        "video_url": play_url,
-        "mp4_url": media_url if not is_hls else None,
-        "hls_url": media_url if is_hls else None,
-        # debug/helpful
-        "storage_name": storage_name,
-    }
-
-
-def _pick_now_from_entries(channel_obj: Channel) -> tuple[Optional[FreestyleVideo], int, list[FreestyleVideo]]:
-    """
-    Returns (current_video, seconds_into, playlist_videos)
-    Uses Channel.rotation_started_at as the start of the loop.
-    """
+    # Prefer is_active=True, lowest sort_order first
     qs = (
-        ChannelEntry.objects.filter(channel=channel_obj, is_active=True)
-        .select_related("video")
+        ChannelEntry.objects.filter(channel=ch, is_active=True)
         .order_by("sort_order", "id")
     )
-    entries = list(qs)
-    videos = [e.video for e in entries if getattr(e, "video_id", None)]
-
-    if not videos:
-        # fallback: any videos at all
-        any_vid = FreestyleVideo.objects.order_by("id").first()
-        return any_vid, 0, ([any_vid] if any_vid else [])
-
-    # Ensure rotation_started_at exists
-    if not getattr(channel_obj, "rotation_started_at", None):
-        channel_obj.rotation_started_at = timezone.now()
-        channel_obj.save(update_fields=["rotation_started_at"])
-
-    started = channel_obj.rotation_started_at
-    now = timezone.now()
-
-    elapsed = int((now - started).total_seconds())
-    durations = [_duration_seconds(v) for v in videos]
-    total = sum(durations) or 1
-    pos = elapsed % total
-
-    running = 0
-    current = videos[0]
-    seconds_into = 0
-
-    for v, d in zip(videos, durations):
-        if pos < running + d:
-            current = v
-            seconds_into = pos - running
-            break
-        running += d
-
-    return current, seconds_into, videos
+    return qs.first()
 
 
-# -----------------------------
-# Endpoints
-# -----------------------------
-@require_GET
-def now_json(request: HttpRequest, channel: Optional[str] = None):
-    """
-    Works for BOTH:
-      - /now.json
-      - /api/freestyle/channel/<slug>/now.json  (we route this to here)
-    """
-    slug = _get_channel_slug(request, channel)
-    ch = _get_channel(slug)
-
-    current, seconds_into, playlist = _pick_now_from_entries(ch)
-
-    payload = {
-        "ok": True,
-        "channel": slug,
-        "server_time": _iso(timezone.now()),
-        "rotation_started_at": _iso(getattr(ch, "rotation_started_at", None)),
-        "watching": None,  # filled by ping.json if Presence is enabled
-        "now": _serialize_video(current, seconds_into) if current else None,
-        # also return a simple flat shape for older JS
-        "id": current.id if current else None,
-        "title": getattr(current, "title", "") if current else "",
-        "play_url": _serialize_video(current, seconds_into).get("play_url") if current else None,
-        "seconds_into": seconds_into if current else 0,
-        "queue": [_serialize_video(v, 0) for v in playlist[:50]],
-    }
-    return JsonResponse(payload)
+def _offset_seconds(entry) -> int:
+    started = getattr(entry, "started_at", None)
+    if not started:
+        return 0
+    try:
+        return max(0, int((timezone.now() - started).total_seconds()))
+    except Exception:
+        return 0
 
 
 @require_GET
-def messages_json(request: HttpRequest, channel: Optional[str] = None):
+def now_json(request, channel: Optional[str] = None):
     """
-    /messages.json?after_id=0
-    Returns a list of messages newer than after_id.
-    If ChatMessage model doesn't exist, returns empty list.
-    """
-    after_id = _safe_int(request.GET.get("after_id"), 0)
+    Works for:
+      /now.json
+      /api/freestyle/channel/<slug>/now.json
 
-    if ChatMessage is None:
+    Returns:
+      { ok, channel, offset_seconds, now:{id,title,storage_name,play_url,...} }
+    """
+    slug = _channel_slug(request, channel)
+
+    try:
+        entry = _get_active_entry(slug)
+        if not entry:
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "channel": slug,
+                    "offset_seconds": 0,
+                    "now": None,
+                    "item": None,   # keep legacy key (some JS uses it)
+                }
+            )
+
+        video = getattr(entry, "video", None)
+        storage_name, play_url = _extract_storage_and_url(video)
+
+        payload = {
+            "ok": True,
+            "channel": slug,
+            "offset_seconds": _offset_seconds(entry),
+            "now": {
+                "id": getattr(video, "id", None),
+                "title": getattr(video, "title", None),
+                "duration_seconds": _safe_int(getattr(video, "duration_seconds", 0), 0),
+                "is_hls": bool(getattr(video, "is_hls", False)),
+                "storage_name": storage_name,
+                "play_url": play_url,
+                "entry_id": getattr(entry, "id", None),
+            },
+            "item": None,  # legacy key
+        }
+        return JsonResponse(payload)
+
+    except Exception as e:
+        return JsonResponse({"ok": False, "error": str(e), "channel": slug}, status=500)
+
+
+@require_GET
+def messages_json(request, channel: Optional[str] = None):
+    slug = _channel_slug(request, channel)
+    after_id = _safe_int(request.GET.get("after_id", 0), 0)
+
+    # Keep it simple/compatible: your UI just needs "messages" list.
+    try:
+        from .models import ChatMessage
+    except Exception:
         return JsonResponse({"ok": True, "messages": []})
 
-    slug = _get_channel_slug(request, channel)
-    ch = _get_channel(slug)
+    try:
+        qs = ChatMessage.objects.all().order_by("id")
+        if hasattr(ChatMessage, "channel_slug"):
+            qs = qs.filter(channel_slug=slug)
+        elif hasattr(ChatMessage, "channel"):
+            qs = qs.filter(channel__slug=slug)
 
-    qs = ChatMessage.objects.all()
+        if after_id:
+            qs = qs.filter(id__gt=after_id)
 
-    # Try to filter by channel if field exists
-    if hasattr(ChatMessage, "channel_id"):
-        qs = qs.filter(channel=ch)
-
-    if after_id:
-        qs = qs.filter(id__gt=after_id)
-
-    qs = qs.order_by("id")[:200]
-
-    out = []
-    for m in qs:
-        out.append(
-            {
-                "id": m.id,
-                "user": getattr(m, "user_name", None)
-                or getattr(getattr(m, "user", None), "username", None)
-                or getattr(m, "username", None)
-                or "anon",
-                "text": getattr(m, "text", None) or getattr(m, "message", None) or "",
-                "created_at": _iso(getattr(m, "created_at", None) or getattr(m, "timestamp", None)),
-            }
-        )
-
-    return JsonResponse({"ok": True, "messages": out})
+        qs = qs[:50]
+        out = []
+        for m in qs:
+            out.append(
+                {
+                    "id": getattr(m, "id", None),
+                    "name": getattr(m, "name", None) or getattr(m, "user_name", None),
+                    "text": getattr(m, "text", None) or getattr(m, "message", None),
+                    "created_at": getattr(m, "created_at", None),
+                }
+            )
+        return JsonResponse({"ok": True, "messages": out})
+    except Exception as e:
+        return JsonResponse({"ok": False, "error": str(e), "messages": []}, status=500)
 
 
 @require_GET
-def ping_json(request: HttpRequest, channel: Optional[str] = None):
-    """
-    /ping.json?sid=<session-id>
-    Updates presence and returns watching count.
-    If Presence model doesn't exist, returns ok + watching=None.
-    """
-    slug = _get_channel_slug(request, channel)
-    ch = _get_channel(slug)
-
-    sid = (request.GET.get("sid") or "").strip()
-    now = timezone.now()
-
-    watching = None
-
-    if Presence is not None:
-        # Try to record/update presence
-        try:
-            with transaction.atomic():
-                if sid:
-                    obj, created = Presence.objects.get_or_create(
-                        channel=ch,
-                        sid=sid,
-                        defaults={"last_seen_at": now},
-                    )
-                    if not created:
-                        obj.last_seen_at = now
-                        obj.save(update_fields=["last_seen_at"])
-
-                # prune old
-                cutoff = now - timezone.timedelta(seconds=60)
-                Presence.objects.filter(channel=ch, last_seen_at__lt=cutoff).delete()
-
-                watching = Presence.objects.filter(channel=ch).count()
-        except Exception:
-            watching = None
-
+def ping_json(request, channel: Optional[str] = None):
+    # Keep same shape you were already returning (so your JS doesn't break)
+    slug = _channel_slug(request, channel)
     return JsonResponse(
         {
             "ok": True,
             "channel": slug,
-            "server_time": _iso(now),
-            "watching": watching,
+            "server_time": timezone.now().isoformat(),
+            "watching": None,
         }
     )
