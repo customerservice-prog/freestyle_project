@@ -1,6 +1,13 @@
 # freestyle/urls.py
 from django.urls import path
 from . import views
+from . import tv_api_views
+
+urlpatterns = [
+    path("now.json", tv_api_views.now_json),
+    path("messages.json", tv_api_views.messages_json),
+    path("ping.json", tv_api_views.ping_json),
+]
 
 urlpatterns = [
     # Pages

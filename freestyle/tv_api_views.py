@@ -1,214 +1,174 @@
+# freestyle/tv_api_views.py
 from __future__ import annotations
 
-import mimetypes
-import os
-import re
-import time
-
-from django.http import JsonResponse, StreamingHttpResponse, Http404
-from django.shortcuts import get_object_or_404
-from django.urls import reverse
+from django.http import JsonResponse
+from django.utils import timezone
 from django.views.decorators.http import require_GET
 
-from freestyle.models import Channel, ChannelEntry, FreestyleVideo
-
-RANGE_RE = re.compile(r"bytes=(\d*)-(\d*)", re.I)
+from .models import Channel, ChannelEntry, FreestyleVideo, ChatMessage
 
 
-def _no_store(resp: JsonResponse) -> JsonResponse:
-    resp["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    resp["Pragma"] = "no-cache"
-    return resp
+def _best_media_url(video: FreestyleVideo) -> str:
+    """
+    IMPORTANT: This is the Step 3 fix.
 
+    Your DB has: FreestyleVideo.video_file = "freestyle_videos/xyz.mp4"
+    but older code often used: FreestyleVideo.file
 
-def _is_hls(url: str) -> bool:
-    u = (url or "").lower()
-    return u.endswith(".m3u8") or "m3u8" in u
+    We always prefer video.video_file if present, and fall back to video.file.
+    Returns "" if neither exists.
+    """
+    # Prefer new field
+    vf = getattr(video, "video_file", None)
+    if vf is not None:
+        name = getattr(vf, "name", "") or ""
+        if name:
+            try:
+                return vf.url
+            except Exception:
+                pass
 
-
-def _absolute(request, url: str) -> str:
-    if url and url.startswith("/"):
-        return request.build_absolute_uri(url)
-    return url
-
-
-def _local_file_exists(v: FreestyleVideo) -> bool:
-    if not getattr(v, "video_file", None):
-        return False
-    try:
-        path = v.video_file.path
-    except Exception:
-        return False
-    return bool(path) and os.path.exists(path)
-
-
-def _get_play_url(request, v: FreestyleVideo) -> str:
-    # Prefer local file stream endpoint for seek/range
-    if _local_file_exists(v):
-        stream_path = reverse("freestyle_video_stream", args=[v.id])
-        return request.build_absolute_uri(stream_path)
-
-    # Fallback to external playback_url if present
-    url = getattr(v, "playback_url", "") or ""
-    if url:
-        return _absolute(request, url)
+    # Fallback legacy field (if your model still has it)
+    f = getattr(video, "file", None)
+    if f is not None:
+        name = getattr(f, "name", "") or ""
+        if name:
+            try:
+                return f.url
+            except Exception:
+                pass
 
     return ""
 
 
-def _playlist_for_channel(request, slug: str):
-    channel = get_object_or_404(Channel, slug=slug)
+def _get_channel(slug: str | None):
+    slug = (slug or "main").strip() or "main"
+    return Channel.objects.filter(slug=slug).first()
 
-    entries = (
-        ChannelEntry.objects
-        .filter(channel=channel, active=True)
+
+def _current_entry(channel: Channel):
+    """
+    Pick the first active entry by sort_order/id.
+    If you want rotation, we can add it later — this keeps it stable.
+    """
+    return (
+        ChannelEntry.objects.filter(channel=channel, is_active=True)
         .select_related("video")
-        .order_by("position", "id")
+        .order_by("sort_order", "id")
+        .first()
     )
 
-    items: list[dict] = []
-    for e in entries:
-        v: FreestyleVideo = e.video
-        play_url = _get_play_url(request, v)
-        if not play_url:
-            continue
 
-        dur = int(getattr(v, "duration_seconds", 0) or 0)
-        if dur <= 0:
-            dur = 30
+@require_GET
+def now_json(request):
+    """
+    Frontend calls /now.json to figure out what to play.
+    We return the URL using video_file first (Step 3 fix).
+    """
+    slug = request.GET.get("channel") or request.headers.get("X-Channel") or "main"
+    channel = _get_channel(slug)
 
-        items.append({
-            "channel_id": channel.id,
-            "entry_id": e.id,
-            "video_id": v.id,
-            "title": getattr(v, "title", ""),
-            "duration_seconds": dur,
-            "play_url": play_url,
-            "is_hls": _is_hls(play_url),
-        })
+    if not channel:
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "channel_not_found",
+                "channel": slug,
+                "play_url": "",
+                "video_url": "",
+            },
+            status=200,
+        )
 
-    return channel, items
+    entry = _current_entry(channel)
+    if not entry or not entry.video_id:
+        return JsonResponse(
+            {
+                "ok": True,
+                "channel": channel.slug,
+                "is_live": False,
+                "video": None,
+                "play_url": "",
+                "video_url": "",
+                "src": "",
+            },
+            status=200,
+        )
 
+    video = entry.video
+    url = _best_media_url(video)
 
-def _compute_now(server_epoch: int, items: list[dict]):
-    total = sum(int(i["duration_seconds"]) for i in items) or 1
-    pos = server_epoch % total
+    # Return MANY key names so your existing JS works no matter what it expects
+    payload = {
+        "ok": True,
+        "channel": channel.slug,
+        "is_live": bool(getattr(entry, "is_live", False)),
+        "entry_id": entry.id,
+        "video_id": video.id,
 
-    running = 0
-    for idx, it in enumerate(items):
-        d = int(it["duration_seconds"])
-        if running + d > pos:
-            return idx, int(pos - running), total
-        running += d
+        # Common fields
+        "title": getattr(video, "title", "") or "",
+        "duration_seconds": getattr(video, "duration_seconds", None),
 
-    return 0, 0, total
+        # The important part (Step 3):
+        "play_url": url,
+        "video_url": url,
+        "url": url,
+        "src": url,
+
+        # If your frontend expects nested objects:
+        "video": {
+            "id": video.id,
+            "title": getattr(video, "title", "") or "",
+            "duration_seconds": getattr(video, "duration_seconds", None),
+            "play_url": url,
+            "video_url": url,
+            "url": url,
+            "src": url,
+            "is_hls": bool(getattr(video, "is_hls", False)),
+        },
+        "server_time": timezone.now().isoformat(),
+    }
+
+    return JsonResponse(payload, status=200)
 
 
 @require_GET
-def channel_schedule(request, slug: str):
-    channel, items = _playlist_for_channel(request, slug)
-    return _no_store(JsonResponse({
-        "channel": {"id": channel.id, "slug": channel.slug, "name": getattr(channel, "name", channel.slug)},
-        "count": len(items),
-        "items": items,
-    }))
+def messages_json(request):
+    """
+    Your network tab shows: messages.json?after_id=0
+    Return chat messages after an ID.
+    """
+    try:
+        after_id = int(request.GET.get("after_id", "0") or "0")
+    except ValueError:
+        after_id = 0
+
+    qs = ChatMessage.objects.all().order_by("id")
+    if after_id > 0:
+        qs = qs.filter(id__gt=after_id)
+
+    # keep it light
+    qs = qs.select_related(None)[:50]
+
+    data = []
+    for m in qs:
+        data.append(
+            {
+                "id": m.id,
+                "name": getattr(m, "name", "") or getattr(m, "user_name", "") or "anon",
+                "message": getattr(m, "message", "") or getattr(m, "text", "") or "",
+                "created_at": getattr(m, "created_at", None).isoformat() if getattr(m, "created_at", None) else None,
+            }
+        )
+
+    return JsonResponse({"ok": True, "messages": data}, status=200)
 
 
 @require_GET
-def channel_now(request, slug: str):
-    channel, items = _playlist_for_channel(request, slug)
-
-    if not items:
-        return _no_store(JsonResponse({
-            "channel": {"id": channel.id, "slug": channel.slug},
-            "error": "No playable videos in channel (missing files/urls).",
-            "count": 0,
-            "index": 0,
-            "offset_seconds": 0,
-            "item": None,
-        }))
-
-    server_epoch = int(time.time())
-    idx, offset, total = _compute_now(server_epoch, items)
-
-    return _no_store(JsonResponse({
-        "channel": {"id": channel.id, "slug": channel.slug},
-        "server_epoch": server_epoch,
-        "cycle_total_seconds": total,
-        "count": len(items),
-        "index": idx,
-        "offset_seconds": offset,
-        "item": items[idx],
-    }))
-
-
-# -------------------------------
-# Captions JSON endpoint
-# -------------------------------
-@require_GET
-def video_captions(request, video_id: int):
-    v = get_object_or_404(FreestyleVideo, id=video_id)
-    words = getattr(v, "captions_words", None) or []
-    return _no_store(JsonResponse({
-        "video_id": v.id,
-        "count": len(words),
-        "words": words,
-        "model": getattr(v, "captions_model", "") or "",
-    }))
-
-
-# -------------------------------
-# Range-enabled MP4 streaming
-# -------------------------------
-def _iter_file(path: str, start: int, end: int, chunk_size: int = 1024 * 512):
-    with open(path, "rb") as f:
-        f.seek(start)
-        remaining = end - start + 1
-        while remaining > 0:
-            chunk = f.read(min(chunk_size, remaining))
-            if not chunk:
-                break
-            yield chunk
-            remaining -= len(chunk)
-
-
-@require_GET
-def video_stream(request, video_id: int):
-    video = get_object_or_404(FreestyleVideo, id=video_id)
-
-    if not _local_file_exists(video):
-        raise Http404("Local file missing for this video")
-
-    path = video.video_file.path
-    file_size = os.path.getsize(path)
-
-    content_type, _ = mimetypes.guess_type(path)
-    content_type = content_type or "application/octet-stream"
-
-    range_header = request.headers.get("Range") or request.META.get("HTTP_RANGE")
-    if range_header:
-        m = RANGE_RE.match(range_header.strip())
-        if m:
-            start_s, end_s = m.groups()
-            start = int(start_s) if start_s else 0
-            end = int(end_s) if end_s else file_size - 1
-        else:
-            start, end = 0, file_size - 1
-
-        start = max(0, min(start, file_size - 1))
-        end = max(start, min(end, file_size - 1))
-
-        resp = StreamingHttpResponse(_iter_file(path, start, end), status=206, content_type=content_type)
-        resp["Content-Range"] = f"bytes {start}-{end}/{file_size}"
-        resp["Accept-Ranges"] = "bytes"
-        resp["Content-Length"] = str(end - start + 1)
-        resp["Cache-Control"] = "no-store"
-        resp["Pragma"] = "no-cache"
-        return resp
-
-    resp = StreamingHttpResponse(_iter_file(path, 0, file_size - 1), content_type=content_type)
-    resp["Accept-Ranges"] = "bytes"
-    resp["Content-Length"] = str(file_size)
-    resp["Cache-Control"] = "no-store"
-    resp["Pragma"] = "no-cache"
-    return resp
+def ping_json(request):
+    """
+    Your network tab shows ping.json?sid=...
+    Keep it simple and always return ok.
+    """
+    return JsonResponse({"ok": True}, status=200)
