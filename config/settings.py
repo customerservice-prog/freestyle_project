@@ -1,3 +1,4 @@
+# config/settings.py
 from pathlib import Path
 import os
 import dj_database_url
@@ -9,11 +10,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Helpers
 # -------------------------
 def env(name: str, default=None):
+    """
+    Supports NAME or DJANGO_NAME.
+    Example: SECRET_KEY or DJANGO_SECRET_KEY
+    """
     return os.environ.get(name, os.environ.get(f"DJANGO_{name}", default))
 
 
 def env_bool(name: str, default="0") -> bool:
-    return str(env(name, default)).strip().lower() in ("1", "true", "yes", "y", "on")
+    val = str(env(name, default)).strip().lower()
+    return val in ("1", "true", "yes", "y", "on")
 
 
 def split_csv(value) -> list[str]:
@@ -33,12 +39,13 @@ render_host = (env("RENDER_EXTERNAL_HOSTNAME") or "").strip()
 if render_host and render_host not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append(render_host)
 
+# allow all onrender.com subdomains (healthchecks / internal)
 if ".onrender.com" not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append(".onrender.com")
 
 
 # -------------------------
-# Apps
+# Applications
 # -------------------------
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -68,6 +75,10 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = "config.urls"
 
+
+# -------------------------
+# Templates
+# -------------------------
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
@@ -118,7 +129,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 
 # -------------------------
-# I18N
+# Internationalization
 # -------------------------
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
@@ -127,7 +138,7 @@ USE_TZ = True
 
 
 # -------------------------
-# Static
+# Static files
 # -------------------------
 STATIC_URL = "/static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
@@ -142,12 +153,16 @@ STORAGES = {
 # -------------------------
 # Media (uploads)
 # -------------------------
-MEDIA_URL = "/media/"
-MEDIA_ROOT = Path(env("MEDIA_ROOT", str(BASE_DIR / "media")))
+MEDIA_URL = env("MEDIA_URL", "/media/")
+MEDIA_ROOT = Path(env("MEDIA_ROOT", "/var/data/media"))
+
+# If you're using a Render Disk and want Django to serve /media/ through the app
+# (works for small/medium usage; best long-term is CDN)
+SERVE_MEDIA = env_bool("SERVE_MEDIA", "1" if DEBUG else "1")
 
 
 # -------------------------
-# CSRF / Proxy
+# CSRF / proxy
 # -------------------------
 csrf_env = env("CSRF_TRUSTED_ORIGINS")
 if csrf_env:
@@ -171,6 +186,10 @@ if not DEBUG:
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+
+# -------------------------
+# Auth redirects
+# -------------------------
 LOGIN_URL = "/accounts/login/"
 LOGIN_REDIRECT_URL = "/"
 LOGOUT_REDIRECT_URL = "/"
