@@ -1,202 +1,331 @@
 # freestyle/tv_api_views.py
 from __future__ import annotations
 
-from datetime import timedelta
-from typing import Optional, Tuple
+from dataclasses import dataclass
+from typing import Optional, List, Tuple
 
 from django.conf import settings
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpRequest, HttpResponseNotAllowed
 from django.utils import timezone
 from django.views.decorators.http import require_GET
 
-
-def _channel_slug(request, channel_kw: Optional[str] = None) -> str:
-    if channel_kw:
-        return str(channel_kw).strip() or "main"
-    return (request.GET.get("channel") or "main").strip() or "main"
+from .models import Channel, ChannelEntry, ChatMessage, Presence
 
 
-def _safe_int(v, default=0) -> int:
-    try:
-        return int(v)
-    except Exception:
-        return default
+# -------------------------
+# Helpers
+# -------------------------
+
+def _get_channel(slug: str) -> Channel:
+    # If slug is missing/blank, default to "main"
+    slug = (slug or "main").strip() or "main"
+
+    # Prefer exact slug, else fallback to default channel if you have one, else create "main"
+    ch = Channel.objects.filter(slug=slug).first()
+    if ch:
+        return ch
+
+    ch = Channel.objects.filter(is_default=True).first()
+    if ch:
+        return ch
+
+    # last resort: create "main"
+    ch = Channel.objects.create(slug="main", name="Main", is_default=True)
+    return ch
 
 
-def _media_join(storage_name: str) -> str:
-    base = (getattr(settings, "MEDIA_URL", "/media/") or "/media/").strip()
-    if not base.endswith("/"):
-        base += "/"
-    return base + storage_name.lstrip("/")
-
-
-def _extract_storage_and_url(video_obj) -> Tuple[Optional[str], Optional[str]]:
+def _channel_anchor_dt(channel_obj: Channel):
     """
-    Supports BOTH schema styles:
-    - Postgres "varchar" path: video.video_file == 'freestyle_videos/x.mp4'
-    - Django FileField: video.video_file.name + video.video_file.url
-    Also supports legacy field 'file' if it exists.
-    Also supports 'play_url' external URL if present.
+    A stable time anchor for the station clock.
+    We support either:
+      - schedule_started_at (newer model)
+      - rotation_started_at (older model)
     """
-    if not video_obj:
-        return None, None
+    if hasattr(channel_obj, "schedule_started_at"):
+        dt = getattr(channel_obj, "schedule_started_at", None)
+        return dt or timezone.now()
 
-    play_url = getattr(video_obj, "play_url", None)
-    if isinstance(play_url, str) and play_url.strip():
-        return None, play_url.strip()
+    if hasattr(channel_obj, "rotation_started_at"):
+        dt = getattr(channel_obj, "rotation_started_at", None)
+        return dt or timezone.now()
 
-    vf = getattr(video_obj, "video_file", None)
-
-    # Production: video_file stored as string path
-    if isinstance(vf, str) and vf.strip():
-        storage = vf.strip()
-        return storage, _media_join(storage)
-
-    # Dev/FileField: video_file is FieldFile
-    if vf is not None and hasattr(vf, "name"):
-        storage = getattr(vf, "name", None) or None
-        url = getattr(vf, "url", None) or None
-        if storage and url:
-            return storage, url
-        if storage:
-            return storage, _media_join(storage)
-
-    # Legacy fallback
-    legacy = getattr(video_obj, "file", None)
-    if isinstance(legacy, str) and legacy.strip():
-        storage = legacy.strip()
-        return storage, _media_join(storage)
-    if legacy is not None and hasattr(legacy, "name"):
-        storage = getattr(legacy, "name", None) or None
-        url = getattr(legacy, "url", None) or None
-        if storage and url:
-            return storage, url
-        if storage:
-            return storage, _media_join(storage)
-
-    return None, None
+    return timezone.now()
 
 
-def _get_active_entry(channel_slug: str):
-    from .models import Channel, ChannelEntry
-
-    ch = Channel.objects.filter(slug=channel_slug).first()
-    if not ch:
+def _video_fieldfile(obj, field_name: str):
+    """
+    Returns a FieldFile (or None) if obj has a FileField with that name.
+    """
+    if not hasattr(obj, field_name):
         return None
+    f = getattr(obj, field_name, None)
+    # f might be FieldFile or None
+    return f
 
-    # Prefer is_active=True, lowest sort_order first
-    qs = (
-        ChannelEntry.objects.filter(channel=ch, is_active=True)
+
+def _video_storage_name(video) -> Optional[str]:
+    """
+    Prefer DB file fields:
+      - video.video_file.name
+      - video.file.name
+    Fallback:
+      - video.play_url (if it's a /media/... path, strip MEDIA_URL)
+    """
+    vf = _video_fieldfile(video, "video_file")
+    if vf and getattr(vf, "name", None):
+        return vf.name
+
+    f = _video_fieldfile(video, "file")
+    if f and getattr(f, "name", None):
+        return f.name
+
+    play_url = getattr(video, "play_url", "") or ""
+    media_url = getattr(settings, "MEDIA_URL", "/media/")
+    if play_url.startswith(media_url):
+        return play_url[len(media_url):].lstrip("/")
+
+    return None
+
+
+def _video_is_hls(video) -> bool:
+    if bool(getattr(video, "is_hls", False)):
+        return True
+    play_url = (getattr(video, "play_url", "") or "").lower()
+    return play_url.endswith(".m3u8")
+
+
+def _video_play_url(video) -> Optional[str]:
+    """
+    Build the URL the browser should play.
+    - If HLS: prefer video.play_url (should be .m3u8)
+    - Else: return /media/<storage_name>
+    """
+    media_url = getattr(settings, "MEDIA_URL", "/media/")
+    play_url = getattr(video, "play_url", "") or ""
+
+    if _video_is_hls(video):
+        # For HLS, play_url should already be a valid URL/path.
+        return play_url or None
+
+    storage_name = _video_storage_name(video)
+    if storage_name:
+        # Ensure exactly one slash between MEDIA_URL and storage path
+        return f"{media_url.rstrip('/')}/{storage_name.lstrip('/')}"
+    return None
+
+
+def _video_duration(video) -> int:
+    # Duration can be 0 in DB if not filled; return 0 (we handle later)
+    try:
+        return int(getattr(video, "duration_seconds", 0) or 0)
+    except Exception:
+        return 0
+
+
+def _active_entries(channel_obj: Channel) -> List[ChannelEntry]:
+    return list(
+        ChannelEntry.objects.filter(channel=channel_obj, is_active=True)
+        .select_related("video")
         .order_by("sort_order", "id")
     )
-    return qs.first()
 
 
-def _offset_seconds(entry) -> int:
-    started = getattr(entry, "started_at", None)
-    if not started:
-        return 0
+@dataclass
+class Picked:
+    entry: ChannelEntry
+    video: object
+    seconds_into_video: int
+    playlist_ids: List[int]
+    station_offset_seconds: int
+
+
+def _pick_now_from_entries(channel_obj: Channel) -> Optional[Picked]:
+    entries = _active_entries(channel_obj)
+    if not entries:
+        return None
+
+    anchor = _channel_anchor_dt(channel_obj)
+    station_offset = max(0, int((timezone.now() - anchor).total_seconds()))
+
+    # Live stream (if any active entry is marked live)
+    live_entry = next((e for e in entries if getattr(e, "is_live", False)), None)
+    if live_entry:
+        return Picked(
+            entry=live_entry,
+            video=live_entry.video,
+            seconds_into_video=0,
+            playlist_ids=[e.video_id for e in entries],
+            station_offset_seconds=station_offset,
+        )
+
+    # Rotation (MP4s)
+    durations = []
+    for e in entries:
+        d = _video_duration(e.video)
+        # If duration missing, assume 180s so rotation still works
+        durations.append(d if d > 0 else 180)
+
+    total = sum(durations)
+    if total <= 0:
+        # If everything is broken, just pick first
+        return Picked(
+            entry=entries[0],
+            video=entries[0].video,
+            seconds_into_video=0,
+            playlist_ids=[e.video_id for e in entries],
+            station_offset_seconds=station_offset,
+        )
+
+    pos = station_offset % total
+    running = 0
+    for e, d in zip(entries, durations):
+        if pos < running + d:
+            seconds_into = max(0, pos - running)
+            return Picked(
+                entry=e,
+                video=e.video,
+                seconds_into_video=int(seconds_into),
+                playlist_ids=[x.video_id for x in entries],
+                station_offset_seconds=station_offset,
+            )
+        running += d
+
+    # Fallback (should not happen)
+    return Picked(
+        entry=entries[0],
+        video=entries[0].video,
+        seconds_into_video=0,
+        playlist_ids=[e.video_id for e in entries],
+        station_offset_seconds=station_offset,
+    )
+
+
+def _viewer_count_estimate(channel_slug: str) -> int:
+    """
+    Cheap placeholder — your earlier logs show you sometimes used a fake count like 1100.
+    If you want "real" viewers, you can count Presence active in last N seconds.
+    """
+    # Active viewers in last 60s
+    cutoff = timezone.now() - timezone.timedelta(seconds=60)
     try:
-        return max(0, int((timezone.now() - started).total_seconds()))
+        return Presence.objects.filter(channel__slug=channel_slug, last_seen__gte=cutoff).count()
     except Exception:
         return 0
 
 
-@require_GET
-def now_json(request, channel: Optional[str] = None):
-    """
-    Works for:
-      /now.json
-      /api/freestyle/channel/<slug>/now.json
-
-    Returns:
-      { ok, channel, offset_seconds, now:{id,title,storage_name,play_url,...} }
-    """
-    slug = _channel_slug(request, channel)
-
-    try:
-        entry = _get_active_entry(slug)
-        if not entry:
-            return JsonResponse(
-                {
-                    "ok": True,
-                    "channel": slug,
-                    "offset_seconds": 0,
-                    "now": None,
-                    "item": None,   # keep legacy key (some JS uses it)
-                }
-            )
-
-        video = getattr(entry, "video", None)
-        storage_name, play_url = _extract_storage_and_url(video)
-
-        payload = {
-            "ok": True,
-            "channel": slug,
-            "offset_seconds": _offset_seconds(entry),
-            "now": {
-                "id": getattr(video, "id", None),
-                "title": getattr(video, "title", None),
-                "duration_seconds": _safe_int(getattr(video, "duration_seconds", 0), 0),
-                "is_hls": bool(getattr(video, "is_hls", False)),
-                "storage_name": storage_name,
-                "play_url": play_url,
-                "entry_id": getattr(entry, "id", None),
-            },
-            "item": None,  # legacy key
-        }
-        return JsonResponse(payload)
-
-    except Exception as e:
-        return JsonResponse({"ok": False, "error": str(e), "channel": slug}, status=500)
-
+# -------------------------
+# Endpoints expected by TV
+# -------------------------
 
 @require_GET
-def messages_json(request, channel: Optional[str] = None):
-    slug = _channel_slug(request, channel)
-    after_id = _safe_int(request.GET.get("after_id", 0), 0)
+def now_json(request: HttpRequest, channel: Optional[str] = None):
+    """
+    Supports BOTH:
+      - /now.json?channel=main
+      - /api/freestyle/channel/main/now.json  (url kwarg: channel="main")
+    """
+    slug = channel or request.GET.get("channel") or "main"
+    ch = _get_channel(slug)
 
-    # Keep it simple/compatible: your UI just needs "messages" list.
+    picked = _pick_now_from_entries(ch)
+    if not picked:
+        return JsonResponse(
+            {
+                "ok": True,
+                "channel": ch.slug,
+                "offset_seconds": 0,
+                "now": None,
+                "playlist": [],
+                "viewers": _viewer_count_estimate(ch.slug),
+                "sponsor": None,
+            }
+        )
+
+    v = picked.video
+    play_url = _video_play_url(v)
+    storage_name = _video_storage_name(v)
+
+    payload = {
+        "ok": True,
+        "channel": ch.slug,
+
+        # ✅ IMPORTANT: seconds into CURRENT video (must be < duration)
+        "offset_seconds": int(picked.seconds_into_video),
+
+        # optional debug (does NOT drive the player)
+        "station_offset_seconds": int(picked.station_offset_seconds),
+
+        "viewers": _viewer_count_estimate(ch.slug),
+        "sponsor": None,
+        "playlist": picked.playlist_ids,
+
+        "now": {
+            "id": getattr(v, "id", None),
+            "title": getattr(v, "title", "") or "",
+            "duration_seconds": int(_video_duration(v) or 0),
+            "is_hls": bool(_video_is_hls(v)),
+            "storage_name": storage_name,
+            "play_url": play_url,
+            "artwork_url": getattr(v, "artwork_url", "") or "",
+        },
+    }
+    return JsonResponse(payload, json_dumps_params={"ensure_ascii": False})
+
+
+@require_GET
+def messages_json(request: HttpRequest):
+    """
+    /messages.json?after_id=0&channel=main
+    """
+    slug = request.GET.get("channel") or "main"
+    after_id = request.GET.get("after_id") or "0"
     try:
-        from .models import ChatMessage
+        after_id_int = int(after_id)
     except Exception:
-        return JsonResponse({"ok": True, "messages": []})
+        after_id_int = 0
 
-    try:
-        qs = ChatMessage.objects.all().order_by("id")
-        if hasattr(ChatMessage, "channel_slug"):
-            qs = qs.filter(channel_slug=slug)
-        elif hasattr(ChatMessage, "channel"):
-            qs = qs.filter(channel__slug=slug)
+    ch = _get_channel(slug)
+    qs = ChatMessage.objects.filter(channel=ch, id__gt=after_id_int).order_by("id")[:200]
 
-        if after_id:
-            qs = qs.filter(id__gt=after_id)
+    messages = []
+    for m in qs:
+        messages.append(
+            {
+                "id": m.id,
+                "username": m.username,
+                "message": m.message,
+                "created_at": m.created_at.isoformat(),
+            }
+        )
 
-        qs = qs[:50]
-        out = []
-        for m in qs:
-            out.append(
-                {
-                    "id": getattr(m, "id", None),
-                    "name": getattr(m, "name", None) or getattr(m, "user_name", None),
-                    "text": getattr(m, "text", None) or getattr(m, "message", None),
-                    "created_at": getattr(m, "created_at", None),
-                }
-            )
-        return JsonResponse({"ok": True, "messages": out})
-    except Exception as e:
-        return JsonResponse({"ok": False, "error": str(e), "messages": []}, status=500)
+    return JsonResponse({"ok": True, "messages": messages}, json_dumps_params={"ensure_ascii": False})
 
 
 @require_GET
-def ping_json(request, channel: Optional[str] = None):
-    # Keep same shape you were already returning (so your JS doesn't break)
-    slug = _channel_slug(request, channel)
+def ping_json(request: HttpRequest):
+    """
+    /ping.json?sid=<client_id>&channel=main
+    """
+    sid = (request.GET.get("sid") or "").strip()
+    slug = (request.GET.get("channel") or "main").strip() or "main"
+
+    ch = _get_channel(slug)
+
+    if sid:
+        # Update presence
+        Presence.objects.update_or_create(
+            channel=ch,
+            sid=sid,
+            defaults={"last_seen": timezone.now()},
+        )
+
+    # Optionally, return who they're watching, etc. We keep it simple.
     return JsonResponse(
         {
             "ok": True,
-            "channel": slug,
+            "channel": ch.slug,
             "server_time": timezone.now().isoformat(),
             "watching": None,
-        }
+        },
+        json_dumps_params={"ensure_ascii": False},
     )
