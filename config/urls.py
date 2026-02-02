@@ -1,17 +1,16 @@
-# config/urls.py
 from django.contrib import admin
 from django.urls import path, include
-from django.conf import settings
 
-from freestyle.media_serve import media_serve
+from django.conf import settings
+from django.conf.urls.static import static
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+
+    # App serves the TV page at "/" and also serves "/api/freestyle/..."
     path("", include("freestyle.urls")),
 ]
 
-# DEV: Range-enabled media serving (fixes video playback reliability)
+# DEV ONLY: serve uploaded media locally (Render serves it via the disk path directly)
 if settings.DEBUG:
-    urlpatterns += [
-        path("media/<path:path>", media_serve),
-    ]
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

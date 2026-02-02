@@ -1,4 +1,3 @@
-# config/settings.py
 from pathlib import Path
 import os
 import dj_database_url
@@ -10,16 +9,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Helpers
 # -------------------------
 def env(name: str, default=None):
-    """
-    Supports NAME or DJANGO_NAME.
-    Example: SECRET_KEY or DJANGO_SECRET_KEY
-    """
     return os.environ.get(name, os.environ.get(f"DJANGO_{name}", default))
 
 
 def env_bool(name: str, default="0") -> bool:
-    val = str(env(name, default)).strip().lower()
-    return val in ("1", "true", "yes", "y", "on")
+    return str(env(name, default)).strip().lower() in ("1", "true", "yes", "y", "on")
 
 
 def split_csv(value) -> list[str]:
@@ -31,7 +25,7 @@ def split_csv(value) -> list[str]:
 # Core
 # -------------------------
 SECRET_KEY = env("SECRET_KEY", "dev-only-change-me")
-DEBUG = env_bool("DEBUG", "1")  # dev default ON; set DEBUG=0 in prod
+DEBUG = env_bool("DEBUG", "0")
 
 ALLOWED_HOSTS = split_csv(env("ALLOWED_HOSTS", "127.0.0.1,localhost"))
 
@@ -39,13 +33,12 @@ render_host = (env("RENDER_EXTERNAL_HOSTNAME") or "").strip()
 if render_host and render_host not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append(render_host)
 
-# allow Render wildcard hostnames
 if ".onrender.com" not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append(".onrender.com")
 
 
 # -------------------------
-# Applications
+# Apps
 # -------------------------
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -72,12 +65,9 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
+
 ROOT_URLCONF = "config.urls"
 
-
-# -------------------------
-# Templates
-# -------------------------
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
@@ -128,16 +118,16 @@ AUTH_PASSWORD_VALIDATORS = [
 
 
 # -------------------------
-# Internationalization
+# I18N
 # -------------------------
 LANGUAGE_CODE = "en-us"
-TIME_ZONE = env("TIME_ZONE", "UTC")
+TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
 
 
 # -------------------------
-# Static files
+# Static
 # -------------------------
 STATIC_URL = "/static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
@@ -157,15 +147,7 @@ MEDIA_ROOT = Path(env("MEDIA_ROOT", str(BASE_DIR / "media")))
 
 
 # -------------------------
-# Auth
-# -------------------------
-LOGIN_URL = "/freestyle/access/?next=/freestyle/creator/"
-LOGIN_REDIRECT_URL = "/"
-LOGOUT_REDIRECT_URL = "/"
-
-
-# -------------------------
-# CSRF / proxy / cookies
+# CSRF / Proxy
 # -------------------------
 csrf_env = env("CSRF_TRUSTED_ORIGINS")
 if csrf_env:
@@ -180,15 +162,15 @@ else:
     if render_host:
         CSRF_TRUSTED_ORIGINS.append(f"https://{render_host}")
 
-# sensible defaults
-CSRF_COOKIE_SAMESITE = "Lax"
-SESSION_COOKIE_SAMESITE = "Lax"
-
 if not DEBUG:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
     USE_X_FORWARDED_HOST = True
     CSRF_COOKIE_SECURE = True
     SESSION_COOKIE_SECURE = True
-    SECURE_SSL_REDIRECT = False  # Render already terminates SSL
+    SECURE_SSL_REDIRECT = False  # Render terminates SSL
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+LOGIN_URL = "/accounts/login/"
+LOGIN_REDIRECT_URL = "/"
+LOGOUT_REDIRECT_URL = "/"
